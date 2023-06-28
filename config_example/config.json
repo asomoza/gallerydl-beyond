@@ -1,0 +1,100 @@
+ 
+{
+    "extractor":
+    {
+        "base-directory": "./downloads",
+
+        "#": "set global archive file for all extractors",
+        "archive": "./bin/archive.sqlite3",
+        "archive-pragma": ["journal_mode=WAL", "synchronous=NORMAL"],
+
+        "#": "add two custom keywords into the metadata dictionary",
+        "#": "these can be used to further refine your output directories or filenames",
+        "keywords": {"bkey": "", "ckey": ""},
+        "#": "make sure that custom keywords are empty, i.e. they don't appear unless specified by the user",
+        "keywords-default": "",
+
+        "#": "replace invalid path characters with unicode alternatives",
+        "path-restrict": {
+            "\\": "⧹",
+            "/" : "⧸",
+            "|" : "￨",
+            ":" : "꞉",
+            "*" : "∗",
+            "?" : "？",
+            "\"": "″",
+            "<" : "﹤",
+            ">" : "﹥",
+            "\"": "″"
+        }
+    },
+
+    "downloader":
+    {
+        "#": "restrict download speed to 1 MB/s",
+        "rate": "1M",
+
+        "#": "show download progress indicator after 2 seconds",
+        "progress": 2.0,
+
+        "#": "retry failed downloads up to 3 times",
+        "retries": 3,
+
+        "#": "consider a download 'failed' after 8 seconds of inactivity",
+        "timeout": 8.0,
+
+        "#": "write '.part' files into a special directory",
+        "part-directory": "/tmp/.download/",
+
+        "#": "do not update file modification times",
+        "mtime": false,
+
+        "ytdl":
+        {
+            "#": "use yt-dlp instead of youtube-dl",
+            "module": "yt_dlp"
+        }
+    },
+
+    "output":
+    {
+        "log": {
+            "level": "info",
+
+            "#": "use different ANSI colors for each log level",
+            "format": {
+                "debug"  : "\u001b[0;37m{name}: {message}\u001b[0m",
+                "info"   : "\u001b[1;37m{name}: {message}\u001b[0m",
+                "warning": "\u001b[1;33m{name}: {message}\u001b[0m",
+                "error"  : "\u001b[1;31m{name}: {message}\u001b[0m"
+            }
+        },
+
+        "#": "shorten filenames to fit into one terminal line",
+        "#": "while also considering wider East-Asian characters",
+        "shorten": "eaw",
+
+        "#": "enable ANSI escape sequences on Windows",
+        "ansi": true,
+
+        "#": "write logging messages to a separate file",
+        "logfile": {
+            "path": "./bin/logs/log.txt",
+            "mode": "w",
+            "level": "debug"
+        },
+
+        "#": "write unrecognized URLs to a separate file",
+        "unsupportedfile": {
+            "path": "./bin/logs/unsupported.txt",
+            "mode": "a",
+            "format": "{asctime} {message}",
+            "format-date": "%Y-%m-%d-%H-%M-%S"
+        }
+    },
+
+    "#": "use a custom cache file location",
+    "cache": {
+        "file": "./bin/cache.sqlite3"
+    }
+}

@@ -1,0 +1,9 @@
+.venv/
+.vscode/
+app.spec
+database.db
+dist/
+bin/
+build/
+downloads/
+**/__pycache__/
