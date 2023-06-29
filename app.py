@@ -354,7 +354,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.messages.add_message(f"Starting download of URL: {url}")
 
                 # Create and start a download thread for the URL
-                self.download_thread = DownloadThread(url_id, url)
+                self.download_thread = DownloadThread(
+                    url_id, url, self.gallerydl_bin)
                 self.download_thread.output.connect(self.append_output)
                 self.download_thread.finished.connect(
                     lambda: self.download_finished(conn, c))
