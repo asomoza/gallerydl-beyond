@@ -3,6 +3,7 @@ from PyQt6.QtGui import QAction, QColor
 
 red_color = QColor(255, 0, 0)
 
+
 class QueueTableView(QTableView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -31,7 +32,7 @@ class QueueTableView(QTableView):
             # Get the row numbers of the selected rows
             rows = [index.row() for index in indexes]
 
-             # Delete the rows in reverse order
+            # Delete the rows in reverse order
             for row in sorted(rows, reverse=True):
                 # Get the index of the "url" field in this row
                 url_index = self.model().index(row, 1)
@@ -39,7 +40,7 @@ class QueueTableView(QTableView):
                 # Get the value of the "url" field
                 url = self.model().data(url_index)
 
-                self.model().removeRow(row)                
+                self.model().removeRow(row)
                 self.message_window.setTextColor(red_color)
                 self.message_window.append(f"Removed {url}")
 

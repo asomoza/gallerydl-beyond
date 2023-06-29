@@ -3,6 +3,7 @@ from PyQt6.QtGui import QAction, QColor
 
 white_color = QColor(227, 226, 224)
 
+
 class ProcessedTableView(QTableView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -13,7 +14,7 @@ class ProcessedTableView(QTableView):
         self.queue_table = queue_table
 
     def set_message_window(self, message_window):
-        self.message_window = message_window        
+        self.message_window = message_window
 
     def contextMenuEvent(self, event):
         # Create a menu

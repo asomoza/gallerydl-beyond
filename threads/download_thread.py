@@ -1,6 +1,9 @@
+import os
 import subprocess
+import platform
 
 from PyQt6.QtCore import pyqtSignal, QThread
+
 
 class DownloadThread(QThread):
     """
@@ -11,12 +14,13 @@ class DownloadThread(QThread):
     """
     output = pyqtSignal(str)
 
-    def __init__(self, url_id, url):
+    def __init__(self, url_id, url, gallerydl_bin):
         super().__init__()
         self.url_id = url_id
         self.url = url
         self.stop_requested = False
         self.process = None
+        self.gallerydl_bin = gallerydl_bin
 
     def run(self):
         """
@@ -24,9 +28,20 @@ class DownloadThread(QThread):
 
         The output from the gallery-dl command is emitted as a signal using the `output` signal.
         """
+
+        args = [f"./bin/{self.gallerydl_bin}", self.url]
+
+        if os.path.isfile("config.json"):
+            args.extend(['-c', "config.json"])
+
         # Call the gallery-dl command with the URL as an argument
-        self.process = subprocess.Popen(["./bin/gallery-dl.bin", self.url, '-c',
-                                   './config.json'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if platform.system() == 'Windows':
+            self.process = subprocess.Popen(
+                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            self.process = subprocess.Popen(
+                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         # Emit the output from the gallery-dl command as a signal
         while self.process.poll() is None and not self.stop_requested:
