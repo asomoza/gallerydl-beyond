@@ -1,6 +1,8 @@
-# GalleryDL Beyond
+# ![GalleryDL Beyond logo](https://raw.githubusercontent.com/asomoza/gallerydl-beyond/master/resources/logo.jpg) GalleryDL Beyond
 
 GalleryDL Beyond is a graphical user interface (GUI) for gallery-dl, built to provide a dynamic queue system for URLs. This was developed out of a personal need to queue URLs while browsing galleries, as using a text file was not ideal.
+
+![screenshot](https://raw.githubusercontent.com/asomoza/gallerydl-beyond/master/resources/screenshot.png)
 
 ## Features
 
