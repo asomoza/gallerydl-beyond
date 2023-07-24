@@ -24,7 +24,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self, *args, **kwargs):
         """Initialize the main window."""
-
         super(MainWindow, self).__init__(*args, **kwargs)
 
         self.setWindowTitle("GalleryDL Beyond")
@@ -41,14 +40,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create the urls table if it doesn"t exist
         conn = sqlite3.connect("database.db")
         c = conn.cursor()
-        c.execute("""
+        c.execute(
+            """
             CREATE TABLE IF NOT EXISTS urls (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url TEXT NOT NULL,
                 processed INTEGER NOT NULL DEFAULT 0,
                 date_processed TEXT
             );
-        """)
+        """
+        )
         conn.commit()
         conn.close()
 
@@ -138,9 +139,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Set up the table view
         self.queue_table.setModel(self.queue_model)
         self.queue_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows)
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
         self.queue_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection)
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.queue_table.hideColumn(0)
         self.queue_table.hideColumn(2)
         self.queue_table.hideColumn(3)
@@ -158,9 +161,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Set up the processed table view
         self.processed_table.setModel(self.processed_model)
         self.processed_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows)
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
         self.processed_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection)
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.processed_table.hideColumn(0)
         self.processed_table.hideColumn(2)
         self.processed_table.resizeColumnToContents(3)
@@ -274,7 +279,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Query the urls table for the next URL that is not processed
             c.execute(
-                "SELECT id, url FROM urls WHERE processed = 0 ORDER BY id LIMIT 1")
+                "SELECT id, url FROM urls WHERE processed = 0 ORDER BY id LIMIT 1"
+            )
             row = c.fetchone()
 
             # Download URLs until there are no more URLs with processed = 0
@@ -286,11 +292,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.messages.add_message(f"Starting download of URL: {url}")
 
                 # Create and start a download thread for the URL
-                self.download_thread = DownloadThread(
-                    url_id, url, self.gallerydl_bin)
+                self.download_thread = DownloadThread(url_id, url, self.gallerydl_bin)
                 self.download_thread.output.connect(self.append_output)
                 self.download_thread.finished.connect(
-                    lambda: self.download_finished(conn, c))
+                    lambda: self.download_finished(conn, c)
+                )
                 self.download_thread.start()
             else:
                 conn.close()
@@ -317,21 +323,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 Qt.ItemDataRole.DisplayRole,
                 url_id,
                 1,
-                Qt.MatchFlag.MatchExactly
+                Qt.MatchFlag.MatchExactly,
             )[0]
 
             # Update the processed and date_processed columns for the record
             self.queue_model.setData(
                 self.queue_model.index(
-                    record_index.row(), self.queue_model.fieldIndex("processed")),
-                1
+                    record_index.row(), self.queue_model.fieldIndex("processed")
+                ),
+                1,
             )
             self.queue_model.setData(
                 self.queue_model.index(
-                    record_index.row(),
-                    self.queue_model.fieldIndex("date_processed")
+                    record_index.row(), self.queue_model.fieldIndex("date_processed")
                 ),
-                QDateTime.currentDateTimeUtc().toString("yyyy-MM-dd hh:mm:ss")
+                QDateTime.currentDateTimeUtc().toString("yyyy-MM-dd hh:mm:ss"),
             )
 
             # Submit the changes to the database
@@ -345,7 +351,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Query the urls table for the next URL that is not processed
             c.execute(
-                "SELECT id, url FROM urls WHERE processed = 0 ORDER BY id LIMIT 1")
+                "SELECT id, url FROM urls WHERE processed = 0 ORDER BY id LIMIT 1"
+            )
             row = c.fetchone()
 
             if row:
@@ -354,16 +361,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.messages.add_message(f"Starting download of URL: {url}")
 
                 # Create and start a download thread for the URL
-                self.download_thread = DownloadThread(
-                    url_id, url, self.gallerydl_bin)
+                self.download_thread = DownloadThread(url_id, url, self.gallerydl_bin)
                 self.download_thread.output.connect(self.append_output)
                 self.download_thread.finished.connect(
-                    lambda: self.download_finished(conn, c))
+                    lambda: self.download_finished(conn, c)
+                )
                 self.download_thread.start()
             else:
                 conn.close()
-                self.messages.success(
-                    "No more urls to download, queue finished.")
+                self.messages.success("No more urls to download, queue finished.")
                 self.set_button_start()
                 self.downloading = False
         # Release the mutex after writing to the database
@@ -382,11 +388,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(lines) > 2000:
             self.log_text.setPlainText("\n".join(lines[-1000:]))
             self.log_text.verticalScrollBar().setValue(
-                self.log_text.verticalScrollBar().maximum())
+                self.log_text.verticalScrollBar().maximum()
+            )
 
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
+
+    if sys.platform == "win32":
+        app.setStyle("Windows")
+
     window = MainWindow()
     window.show()
     app.exec()
