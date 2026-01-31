@@ -7,3 +7,7 @@ bin/
 build/
 downloads/
 **/__pycache__/
+config.json
+
+# Packaging/build artifacts
+*.egg-info/

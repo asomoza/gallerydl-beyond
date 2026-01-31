@@ -6,19 +6,25 @@ GalleryDL Beyond is a graphical user interface (GUI) for gallery-dl, built to pr
 
 ## Features
 
-- Dynamic queue system
-- Ability to add URLs while others are still downloading
-- Displays downloaded files in a log window
-- Displays downloaded URLs in a message window
-- Pause and resume functionality
-- Editing URLs in the queue before download.
+- Dynamic queue system (add URLs while downloads are running)
+- Concurrent downloads (configurable worker count)
+- Downloads tab: active downloads list + worker-prefixed log output
+- History tab: searchable URL list with status, download count, and last error
+- Duplicate URL handling: “Check for new files” or “Force full re-download”
+- Pause/resume and Stop All controls
 
 ## Installation
 
-To install GalleryDL Beyond, you must have Python 3.7 or higher and pip installed on your system. Then, run the following command in your terminal:
+This project targets Python 3.12+ and uses `uv` for environment management.
 
 ```bash
-pip install -r requirements
+uv sync
+```
+
+Alternatively (pip):
+
+```bash
+pip install -e .
 ```
 
 For a more controlled environment, this application requires a configuration file to be located in the same directory as the project or the executable. If no configuration file is found, an example configuration file will be created with the following settings:
@@ -29,12 +35,64 @@ For a more controlled environment, this application requires a configuration fil
 - Restricts download speed to 1 MB/s.
 - Sets other download and output configurations.
 
-The application also expects a binary of gallery-dl to be located inside a bin subdirectory. If no binary is found, the application will automatically download one from the official gallery-dl GitHub repository, which can also be downloaded manually [here](https://github.com/mikf/gallery-dl/releases). To make this application portable, it is necessary to provide the binary instead of relying on it being installed on the system.
+Note: current development targets the modern `src/` application.
 
-Run the app with:
+## Config management (new `src/` app)
+
+The modern `src/` app uses a `config.json` file for gallery-dl.
+
+- On startup, it ensures `config.json` exists in the current working directory.
+- If missing, it copies from `config_example/config.json` when available (otherwise it writes a minimal default).
+- Use the **Config** button in the UI to edit common settings:
+	- `extractor.base-directory`
+	- `extractor.archive`
+	- `downloader.rate`
+	- `downloader.retries`
+	- `downloader.timeout`
+
+## Gallery-dl selection (new `src/` app)
+
+The modern `src/` entrypoint resolves how to run gallery-dl at startup and stores your preference in `QSettings`.
+
+Available modes:
+
+- **Auto (recommended)**: uses system `gallery-dl` if found on `PATH`, otherwise uses the current Python environment (`python -m gallery_dl`).
+- **System**: always uses `gallery-dl` from `PATH`.
+- **Python env**: uses `python -m gallery_dl` from the current environment.
+- **Custom**: use a user-selected executable path.
+
+Open **Settings** in the UI to change the mode.
+
+## History tab actions (new `src/` app)
+
+Right-click any row in **History** for quick actions:
+
+- **Copy URL**: copies the selected URL to your clipboard
+- **Check for new files**: re-queues the URL using archive semantics (only downloads new items)
+- **Force full re-download**: re-queues the URL and runs gallery-dl with `--no-skip`
+- **Remove from history…**: deletes the row after a confirmation prompt (blocked while downloading)
+
+## Troubleshooting
+
+### “gallery-dl not found”
+
+- If you expect a system install: verify `gallery-dl` is on your `PATH` (or use **Settings → Custom** and point to the executable).
+- If you’re using the project environment: choose **Settings → Python env** (runs `python -m gallery_dl`).
+- If `python -m gallery_dl` fails, install it into the current environment (`uv sync` for this project, or `pip install gallery-dl`).
+
+### Update behavior
+
+- Auto-update is only attempted when using **Python env** mode (updating a system binary/package isn’t safe/portable).
+- If updates fail, ensure either `uv` is available or that `pip` is installed in the current environment.
+
+### Wrong gallery-dl being used
+
+- Switch to **System** to force `PATH` usage, or **Custom** to pin a specific executable.
+
+Run the app (new `src/` entrypoint) with:
 
 ```bash
-python app.py
+uv run python -m gallerydl_beyond
 ```
 
 ## Release build
@@ -44,13 +102,20 @@ To create a self-contained application run this command:
 ### Linux
 
 ```bash
-pyinstaller --noconfirm --onefile --windowed --add-data "./config_example/config.json:."  --noconsole "./app.py"
+pyinstaller --noconfirm --onefile --windowed \
+	--add-data "./config_example/config.json:." \
+	--paths "./src" \
+	--noconsole "./src/run_gallerydl_beyond.py"
 ```
 
 ### Windows
 
 ```batch
-pyinstaller --noconfirm --onefile --windowed --icon "./resources/256x256.ico" --add-data "./config_example/config.json;."  --noconsole "./app.py"
+pyinstaller --noconfirm --onefile --windowed \
+	--icon "./resources/256x256.ico" \
+	--add-data "./config_example/config.json;." \
+	--paths "./src" \
+	--noconsole "./src/run_gallerydl_beyond.py"
 ```
 
 ## Acknowledgements

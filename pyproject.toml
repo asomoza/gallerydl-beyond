@@ -1,0 +1,43 @@
+[project]
+name = "gallerydl_beyond"
+version = "0.0.2"
+authors = [{ name = "Alvaro Somoza", email = "somoza.alvaro@gmail.com" }]
+description = "Graphical User Interface (GUI) for gallery-dl"
+readme = "README.MD"
+requires-python = ">=3.12"
+dependencies = [
+    "gallery-dl<1.29.4",
+    "packaging>=25.0",
+    "pyqt6",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.13.0",
+]
+
+[tool.ruff]
+line-length = 119
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.gui-scripts]
+gallerydl_beyond = "gallerydl_beyond.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true

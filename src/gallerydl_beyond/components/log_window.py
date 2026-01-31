@@ -1,5 +1,6 @@
-from PyQt6.QtWidgets import QTextEdit
 from PyQt6 import QtGui
+from PyQt6.QtWidgets import QTextEdit
+
 
 white_color = QtGui.QColor(227, 226, 224)
 yellow_color = QtGui.QColor(214, 187, 103)
@@ -7,7 +8,7 @@ green_color = QtGui.QColor(29, 218, 153)
 red_color = QtGui.QColor(255, 0, 0)
 
 
-class MessageWindow(QTextEdit):
+class LogWindow(QTextEdit):
     def __init__(self):
         super().__init__()
 
@@ -38,3 +39,21 @@ class MessageWindow(QTextEdit):
     def error(self, message):
         self.setTextColor(red_color)
         self.append(message)
+
+    def append_to_last_line(self, text, color=white_color):
+        cursor = self.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.EndOfLine)
+        char_format = QtGui.QTextCharFormat()
+        char_format.setForeground(color)
+        cursor.insertText(text, char_format)
+        self.setTextCursor(cursor)
+
+    def append_error(self, message):
+        self.append_to_last_line(message, red_color)
+
+    def append_warning(self, message):
+        self.append_to_last_line(message, yellow_color)
+
+    def append_success(self, message):
+        self.append_to_last_line(message, green_color)
