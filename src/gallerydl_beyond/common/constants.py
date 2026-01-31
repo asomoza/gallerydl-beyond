@@ -16,6 +16,7 @@ class SettingsKeys:
     GALLERYDL_PATH = "gallerydl/path"  # str | None
     GALLERYDL_MODE = "gallerydl/mode"  # str: auto|system|python|custom
     GALLERYDL_CUSTOM_PATH = "gallerydl/customPath"  # str | None
+    HISTORY_PAGE_SIZE = "history/pageSize"  # int, default: 100
 
 
 DEFAULT_DB_FILENAME = "gallery-dl.db"

@@ -13,6 +13,13 @@ from gallerydl_beyond.common.constants import DEFAULT_DB_FILENAME, UrlStatus
 
 
 @dataclass(frozen=True)
+class TagRow:
+    id: int
+    name: str
+    date_created: str
+
+
+@dataclass(frozen=True)
 class UrlRow:
     id: int
     url: str
@@ -24,6 +31,7 @@ class UrlRow:
     date_processed: str | None
     last_error: str | None
     skipped_count: int = 0
+    tags: tuple[str, ...] = ()
 
 
 class DatabaseManager:
@@ -73,6 +81,7 @@ class DatabaseManager:
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='urls';")
         if cursor.fetchone() is None:
             self._create_urls_table(conn)
+            self._create_tags_tables(conn)
             return
 
         cursor.execute("PRAGMA table_info(urls);")
@@ -84,12 +93,15 @@ class DatabaseManager:
             if "skipped_count" not in cols:
                 conn.execute("ALTER TABLE urls ADD COLUMN skipped_count INTEGER NOT NULL DEFAULT 0;")
             self._ensure_indexes(conn)
+            # Ensure tags tables exist (migration for existing databases)
+            self._create_tags_tables(conn)
             return
 
         # Legacy schema (id, url, processed, date_processed)
         legacy_cols = {"id", "url", "processed", "date_processed"}
         if set(cols) >= legacy_cols and "status" not in cols:
             self._migrate_legacy_urls(conn)
+            self._create_tags_tables(conn)
             return
 
         # Unknown schema: do not destroy data.
@@ -116,6 +128,35 @@ class DatabaseManager:
 
     def _ensure_indexes(self, conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_urls_status ON urls(status);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_urls_date_processed ON urls(date_processed);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_urls_date_added ON urls(date_added);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_urls_url ON urls(url);")
+
+    def _create_tags_tables(self, conn: sqlite3.Connection) -> None:
+        """Create tags and url_tags tables if they don't exist."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                date_created TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS url_tags (
+                url_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                date_assigned TEXT NOT NULL,
+                PRIMARY KEY (url_id, tag_id),
+                FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            );
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_url_tags_url_id ON url_tags(url_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_url_tags_tag_id ON url_tags(tag_id);")
 
     def _migrate_legacy_urls(self, conn: sqlite3.Connection) -> None:
         # Rename existing table and recreate with new schema.
@@ -268,38 +309,105 @@ class DatabaseManager:
             ]
             return int(pending), int(stopped), int(active)
 
-    def list_urls(self, *, search: str | None = None, limit: int = 500) -> list[UrlRow]:
+    def count_urls(self, *, search: str | None = None, tag_id: int | None = None) -> int:
+        """Return total count of URLs matching filters.
+
+        Args:
+            search: filters by substring match on URL.
+            tag_id: if provided, only count URLs with this tag.
+        """
+        with self._locked(), self._connect() as conn:
+            base_query = "SELECT COUNT(*) FROM urls u"
+            conditions = []
+            params: list = []
+
+            if search and search.strip():
+                conditions.append("u.url LIKE ?")
+                params.append(f"%{search.strip()}%")
+
+            if tag_id is not None:
+                conditions.append(
+                    "EXISTS (SELECT 1 FROM url_tags ut WHERE ut.url_id = u.id AND ut.tag_id = ?)"
+                )
+                params.append(int(tag_id))
+
+            if conditions:
+                base_query += " WHERE " + " AND ".join(conditions)
+
+            result = conn.execute(base_query + ";", params).fetchone()
+            return int(result[0])
+
+    # Valid sort columns for list_urls
+    SORT_COLUMNS = {
+        "id": "u.id",
+        "url": "u.url",
+        "status": "u.status",
+        "download_count": "u.download_count",
+        "date_added": "u.date_added",
+        "date_processed": "COALESCE(u.date_processed, u.date_added)",
+    }
+
+    def list_urls(
+        self,
+        *,
+        search: str | None = None,
+        tag_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_column: str = "date_processed",
+        sort_ascending: bool = False,
+    ) -> list[UrlRow]:
         """Return recent URLs for History tab.
 
-        `search` filters by substring match on URL.
+        Args:
+            search: filters by substring match on URL.
+            tag_id: if provided, only return URLs with this tag.
+            limit: max number of results.
+            offset: number of results to skip (for pagination).
+            sort_column: column to sort by (id, url, status, download_count, date_added, date_processed).
+            sort_ascending: if True, sort ascending; otherwise descending.
         """
         limit = max(1, int(limit))
+        offset = max(0, int(offset))
+
+        # Validate and map sort column
+        sql_sort_column = self.SORT_COLUMNS.get(sort_column, "COALESCE(u.date_processed, u.date_added)")
+        sort_direction = "ASC" if sort_ascending else "DESC"
 
         with self._locked(), self._connect() as conn:
+            # Build query with optional filters
+            base_query = """
+                SELECT u.id, u.url, u.status, u.force_redownload, u.check_new_only,
+                       u.download_count, u.date_added, u.date_processed, u.last_error,
+                       u.skipped_count,
+                       (SELECT GROUP_CONCAT(t.name, ', ')
+                        FROM url_tags ut
+                        JOIN tags t ON ut.tag_id = t.id
+                        WHERE ut.url_id = u.id
+                        ORDER BY t.name) AS tag_names
+                FROM urls u
+            """
+            conditions = []
+            params: list = []
+
             if search and search.strip():
-                needle = f"%{search.strip()}%"
-                rows = conn.execute(
-                    """
-                    SELECT id, url, status, force_redownload, check_new_only, download_count,
-                           date_added, date_processed, last_error, skipped_count
-                    FROM urls
-                    WHERE url LIKE ?
-                    ORDER BY COALESCE(date_processed, date_added) DESC
-                    LIMIT ?;
-                    """,
-                    (needle, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT id, url, status, force_redownload, check_new_only, download_count,
-                           date_added, date_processed, last_error, skipped_count
-                    FROM urls
-                    ORDER BY COALESCE(date_processed, date_added) DESC
-                    LIMIT ?;
-                    """,
-                    (limit,),
-                ).fetchall()
+                conditions.append("u.url LIKE ?")
+                params.append(f"%{search.strip()}%")
+
+            if tag_id is not None:
+                conditions.append(
+                    "EXISTS (SELECT 1 FROM url_tags ut WHERE ut.url_id = u.id AND ut.tag_id = ?)"
+                )
+                params.append(int(tag_id))
+
+            if conditions:
+                base_query += " WHERE " + " AND ".join(conditions)
+
+            base_query += f" ORDER BY {sql_sort_column} {sort_direction} LIMIT ? OFFSET ?;"
+            params.append(limit)
+            params.append(offset)
+
+            rows = conn.execute(base_query, params).fetchall()
 
             return [
                 UrlRow(
@@ -313,6 +421,7 @@ class DatabaseManager:
                     date_processed=r[7],
                     last_error=r[8],
                     skipped_count=int(r[9]) if r[9] is not None else 0,
+                    tags=tuple(r[10].split(", ")) if r[10] else (),
                 )
                 for r in rows
             ]
@@ -638,3 +747,141 @@ class DatabaseManager:
                     skipped += 1
 
         return added, skipped
+
+    # ============== Tag CRUD Methods ==============
+
+    def create_tag(self, name: str) -> int | None:
+        """Create a new tag.
+
+        Returns the new tag id, or None if a tag with that name already exists.
+        """
+        name = name.strip()
+        if not name:
+            raise ValueError("tag name cannot be empty")
+
+        with self._locked(), self._connect() as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO tags (name, date_created) VALUES (?, ?);",
+                    (name, now),
+                )
+            except sqlite3.IntegrityError:
+                return None
+            return int(cur.lastrowid)
+
+    def rename_tag(self, tag_id: int, new_name: str) -> bool:
+        """Rename an existing tag.
+
+        Returns True if the tag was renamed, False if not found or name conflict.
+        """
+        new_name = new_name.strip()
+        if not new_name:
+            raise ValueError("tag name cannot be empty")
+
+        with self._locked(), self._connect() as conn:
+            try:
+                cur = conn.execute(
+                    "UPDATE tags SET name = ? WHERE id = ?;",
+                    (new_name, int(tag_id)),
+                )
+            except sqlite3.IntegrityError:
+                return False
+            return int(cur.rowcount) > 0
+
+    def delete_tag(self, tag_id: int) -> bool:
+        """Delete a tag.
+
+        Returns True if deleted. Associations in url_tags are CASCADE deleted.
+        """
+        with self._locked(), self._connect() as conn:
+            cur = conn.execute("DELETE FROM tags WHERE id = ?;", (int(tag_id),))
+            return int(cur.rowcount) > 0
+
+    def list_tags(self) -> list[TagRow]:
+        """List all tags ordered by name."""
+        with self._locked(), self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, name, date_created FROM tags ORDER BY name ASC;"
+            ).fetchall()
+            return [
+                TagRow(id=int(r[0]), name=str(r[1]), date_created=str(r[2]))
+                for r in rows
+            ]
+
+    def get_tag_by_id(self, tag_id: int) -> TagRow | None:
+        """Get a tag by its ID."""
+        with self._locked(), self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, name, date_created FROM tags WHERE id = ?;",
+                (int(tag_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            return TagRow(id=int(row[0]), name=str(row[1]), date_created=str(row[2]))
+
+    # ============== URL-Tag Association Methods ==============
+
+    def assign_tag_to_url(self, url_id: int, tag_id: int) -> bool:
+        """Assign a tag to a URL.
+
+        Returns True if assigned, False if already assigned or IDs invalid.
+        """
+        with self._locked(), self._connect() as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                conn.execute(
+                    "INSERT INTO url_tags (url_id, tag_id, date_assigned) VALUES (?, ?, ?);",
+                    (int(url_id), int(tag_id), now),
+                )
+            except sqlite3.IntegrityError:
+                return False
+            return True
+
+    def remove_tag_from_url(self, url_id: int, tag_id: int) -> bool:
+        """Remove a tag from a URL.
+
+        Returns True if removed, False if not found.
+        """
+        with self._locked(), self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM url_tags WHERE url_id = ? AND tag_id = ?;",
+                (int(url_id), int(tag_id)),
+            )
+            return int(cur.rowcount) > 0
+
+    def get_tags_for_url(self, url_id: int) -> list[TagRow]:
+        """Get all tags assigned to a URL."""
+        with self._locked(), self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT t.id, t.name, t.date_created
+                FROM tags t
+                JOIN url_tags ut ON t.id = ut.tag_id
+                WHERE ut.url_id = ?
+                ORDER BY t.name ASC;
+                """,
+                (int(url_id),),
+            ).fetchall()
+            return [
+                TagRow(id=int(r[0]), name=str(r[1]), date_created=str(r[2]))
+                for r in rows
+            ]
+
+    def set_url_tags(self, url_id: int, tag_ids: Iterable[int]) -> None:
+        """Set the tags for a URL, replacing any existing tags."""
+        tag_ids = list(tag_ids)
+        with self._locked(), self._connect() as conn:
+            # Remove existing tags
+            conn.execute("DELETE FROM url_tags WHERE url_id = ?;", (int(url_id),))
+
+            # Add new tags
+            now = datetime.now(timezone.utc).isoformat()
+            for tag_id in tag_ids:
+                try:
+                    conn.execute(
+                        "INSERT INTO url_tags (url_id, tag_id, date_assigned) VALUES (?, ?, ?);",
+                        (int(url_id), int(tag_id), now),
+                    )
+                except sqlite3.IntegrityError:
+                    pass  # Skip invalid tag_ids

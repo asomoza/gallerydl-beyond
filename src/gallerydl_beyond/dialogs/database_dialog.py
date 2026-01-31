@@ -7,15 +7,23 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from gallerydl_beyond.common.base_dialog import BaseDialog
@@ -418,6 +426,48 @@ class DatabaseDialog(BaseDialog):
         archive_group.setLayout(archive_layout)
         self.main_layout.addWidget(archive_group)
 
+        # Tag Management Group
+        tag_group = QGroupBox("Tag Management")
+        tag_layout = QVBoxLayout()
+        tag_layout.setSpacing(8)
+
+        tag_desc = QLabel(
+            "Create and manage tags to organize your URLs.\n"
+            "Tags can be assigned to URLs from the History tab context menu."
+        )
+        tag_desc.setStyleSheet("color: #8a8a8a; font-size: 11px;")
+        tag_desc.setWordWrap(True)
+        tag_layout.addWidget(tag_desc)
+
+        self._tag_list = QListWidget()
+        self._tag_list.setMaximumHeight(120)
+        self._tag_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        tag_layout.addWidget(self._tag_list)
+
+        tag_btn_layout = QHBoxLayout()
+
+        add_tag_btn = QPushButton("Add Tag...")
+        add_tag_btn.setToolTip("Create a new tag")
+        add_tag_btn.clicked.connect(self._add_tag)
+
+        rename_tag_btn = QPushButton("Rename...")
+        rename_tag_btn.setToolTip("Rename the selected tag")
+        rename_tag_btn.clicked.connect(self._rename_tag)
+
+        delete_tag_btn = QPushButton("Delete")
+        delete_tag_btn.setToolTip("Delete the selected tag")
+        delete_tag_btn.setStyleSheet("color: #ff6b6b;")
+        delete_tag_btn.clicked.connect(self._delete_tag)
+
+        tag_btn_layout.addWidget(add_tag_btn)
+        tag_btn_layout.addWidget(rename_tag_btn)
+        tag_btn_layout.addWidget(delete_tag_btn)
+        tag_btn_layout.addStretch()
+        tag_layout.addLayout(tag_btn_layout)
+
+        tag_group.setLayout(tag_layout)
+        self.main_layout.addWidget(tag_group)
+
         # Database Maintenance Group
         maint_group = QGroupBox("Database Maintenance")
         maint_layout = QVBoxLayout()
@@ -510,6 +560,9 @@ class DatabaseDialog(BaseDialog):
                     self._archive_size_label.setText(_format_size(self._archive_path.stat().st_size))
                 else:
                     self._archive_size_label.setText("Not created yet")
+
+            # Refresh tag list
+            self._refresh_tag_list()
 
         except Exception as e:
             self._show_error(f"Failed to load statistics: {e}")
@@ -864,33 +917,10 @@ class DatabaseDialog(BaseDialog):
                 else:
                     not_reconstructable += len(ids)
 
-            # Build summary
-            summary_lines = [f"Found {total_galleries} unique galleries from {len(galleries)} extractors:\n"]
-            for extractor, ids in sorted(galleries.items(), key=lambda x: -len(x[1])):
-                pattern = EXTRACTOR_URL_PATTERNS.get(extractor.lower())
-                root = known_categories.get(extractor.lower(), "")
-
-                if pattern:
-                    status = "can reconstruct"
-                elif root:
-                    status = f"known site ({root[:30]}...) - no URL pattern"
-                else:
-                    status = "unknown extractor"
-                summary_lines.append(f"  • {extractor}: {len(ids)} galleries ({status})")
-
-            summary_lines.append(f"\nCan reconstruct: {reconstructable}")
-            summary_lines.append(f"Cannot reconstruct: {not_reconstructable}")
-            summary_lines.append("\nProceed to add reconstructable URLs to history?")
-
-            reply = QMessageBox.question(
-                self,
-                "Extract URLs",
-                "\n".join(summary_lines),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-
-            if reply != QMessageBox.StandardButton.Yes:
+            # Build summary using a scrollable dialog for large extractor lists
+            if not self._show_extract_summary_dialog(
+                galleries, known_categories, total_galleries, reconstructable, not_reconstructable
+            ):
                 return
 
             # Add reconstructable URLs
@@ -919,3 +949,178 @@ class DatabaseDialog(BaseDialog):
 
         except Exception as e:
             self._show_error(f"Failed to extract URLs: {e}")
+
+    def _show_extract_summary_dialog(
+        self,
+        galleries: dict[str, set[str]],
+        known_categories: dict[str, str],
+        total_galleries: int,
+        reconstructable: int,
+        not_reconstructable: int,
+    ) -> bool:
+        """Show a scrollable dialog with extraction summary. Returns True if user confirms."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Extract URLs")
+        dialog.setMinimumWidth(500)
+        dialog.setMaximumHeight(600)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+
+        # Header summary
+        header = QLabel(f"Found {total_galleries} unique galleries from {len(galleries)} extractors")
+        header.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(header)
+
+        # Scrollable extractor list
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setMaximumHeight(350)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(8, 8, 8, 8)
+        scroll_layout.setSpacing(4)
+
+        for extractor, ids in sorted(galleries.items(), key=lambda x: -len(x[1])):
+            pattern = EXTRACTOR_URL_PATTERNS.get(extractor.lower())
+            root = known_categories.get(extractor.lower(), "")
+
+            if pattern:
+                status = "can reconstruct"
+                color = "#4caf50"  # green
+            elif root:
+                status = f"known site - no URL pattern"
+                color = "#ff9800"  # orange
+            else:
+                status = "unknown extractor"
+                color = "#f44336"  # red
+
+            line_label = QLabel(f"• <b>{extractor}</b>: {len(ids)} galleries (<span style='color:{color}'>{status}</span>)")
+            line_label.setTextFormat(Qt.TextFormat.RichText)
+            scroll_layout.addWidget(line_label)
+
+        scroll_layout.addStretch()
+        scroll_area.setWidget(scroll_content)
+        layout.addWidget(scroll_area)
+
+        # Summary stats
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet("background-color: #2a2a2a; border-radius: 4px; padding: 8px;")
+        stats_layout = QVBoxLayout(stats_frame)
+        stats_layout.setContentsMargins(12, 8, 12, 8)
+
+        can_label = QLabel(f"<span style='color:#4caf50'>✓</span> Can reconstruct: <b>{reconstructable}</b>")
+        can_label.setTextFormat(Qt.TextFormat.RichText)
+        stats_layout.addWidget(can_label)
+
+        cannot_label = QLabel(f"<span style='color:#f44336'>✗</span> Cannot reconstruct: <b>{not_reconstructable}</b>")
+        cannot_label.setTextFormat(Qt.TextFormat.RichText)
+        stats_layout.addWidget(cannot_label)
+
+        layout.addWidget(stats_frame)
+
+        # Question
+        question = QLabel("Proceed to add reconstructable URLs to history?")
+        question.setStyleSheet("margin-top: 8px;")
+        layout.addWidget(question)
+
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    # ============== Tag Management Methods ==============
+
+    def _refresh_tag_list(self) -> None:
+        """Refresh the tag list widget."""
+        self._tag_list.clear()
+        try:
+            tags = self._db.list_tags()
+            for tag in tags:
+                item = QListWidgetItem(tag.name)
+                item.setData(Qt.ItemDataRole.UserRole, tag.id)
+                self._tag_list.addItem(item)
+        except Exception as e:
+            self._show_error(f"Failed to load tags: {e}")
+
+    def _add_tag(self) -> None:
+        """Add a new tag."""
+        name, ok = QInputDialog.getText(
+            self,
+            "Add Tag",
+            "Enter tag name:",
+        )
+        if not ok or not name.strip():
+            return
+
+        try:
+            tag_id = self._db.create_tag(name.strip())
+            if tag_id is None:
+                QMessageBox.warning(self, "Tag Exists", f"A tag named '{name.strip()}' already exists.")
+                return
+            self._refresh_tag_list()
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Name", str(e))
+        except Exception as e:
+            self._show_error(f"Failed to create tag: {e}")
+
+    def _rename_tag(self) -> None:
+        """Rename the selected tag."""
+        item = self._tag_list.currentItem()
+        if item is None:
+            QMessageBox.information(self, "No Selection", "Please select a tag to rename.")
+            return
+
+        old_name = item.text()
+        tag_id = item.data(Qt.ItemDataRole.UserRole)
+
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Tag",
+            "Enter new name:",
+            text=old_name,
+        )
+        if not ok or not new_name.strip() or new_name.strip() == old_name:
+            return
+
+        try:
+            if not self._db.rename_tag(tag_id, new_name.strip()):
+                QMessageBox.warning(
+                    self, "Rename Failed", f"A tag named '{new_name.strip()}' already exists."
+                )
+                return
+            self._refresh_tag_list()
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Name", str(e))
+        except Exception as e:
+            self._show_error(f"Failed to rename tag: {e}")
+
+    def _delete_tag(self) -> None:
+        """Delete the selected tag."""
+        item = self._tag_list.currentItem()
+        if item is None:
+            QMessageBox.information(self, "No Selection", "Please select a tag to delete.")
+            return
+
+        tag_name = item.text()
+        tag_id = item.data(Qt.ItemDataRole.UserRole)
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Delete tag '{tag_name}'?\n\nThis will remove the tag from all URLs.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                self._db.delete_tag(tag_id)
+                self._refresh_tag_list()
+            except Exception as e:
+                self._show_error(f"Failed to delete tag: {e}")

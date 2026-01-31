@@ -11,23 +11,122 @@ from gallerydl_beyond.common.database_manager import DatabaseManager, UrlRow
 
 class HistoryModel(QAbstractTableModel):
     COLUMNS = [
+        "#",
         "URL",
         "Status",
         "Downloads",
         "Added",
         "Processed",
         "Last error",
+        "Tags",
     ]
+
+    # Map column index to database sort column name
+    SORTABLE_COLUMNS = {
+        0: "id",            # # (row number based on id order)
+        1: "url",           # URL
+        2: "status",        # Status
+        3: "download_count",  # Downloads
+        4: "date_added",    # Added
+        5: "date_processed",  # Processed
+        # 6: Last error - not sortable
+        # 7: Tags - not sortable
+    }
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
         self._db = db
         self._rows: list[UrlRow] = []
+        # Pagination state
+        self._page_size: int = 100
+        self._current_page: int = 0
+        self._total_count: int = 0
+        self._search: str | None = None
+        self._tag_id: int | None = None
+        # Sorting state
+        self._sort_column: str = "date_processed"
+        self._sort_ascending: bool = False
 
-    def refresh(self, *, search: str | None = None) -> None:
+    def refresh(
+        self,
+        *,
+        search: str | None = None,
+        tag_id: int | None = None,
+        page: int = 0,
+        page_size: int = 100,
+        sort_column: str | None = None,
+        sort_ascending: bool | None = None,
+    ) -> None:
+        self._search = search
+        self._tag_id = tag_id
+        self._page_size = page_size
+
+        # Update sort state if provided
+        if sort_column is not None:
+            self._sort_column = sort_column
+        if sort_ascending is not None:
+            self._sort_ascending = sort_ascending
+
+        self._total_count = self._db.count_urls(search=search, tag_id=tag_id)
+
+        # Clamp page to valid range
+        max_page = max(0, (self._total_count - 1) // page_size) if self._total_count > 0 else 0
+        self._current_page = max(0, min(page, max_page))
+
+        offset = self._current_page * page_size
+
         self.beginResetModel()
-        self._rows = self._db.list_urls(search=search, limit=500)
+        self._rows = self._db.list_urls(
+            search=search,
+            tag_id=tag_id,
+            limit=page_size,
+            offset=offset,
+            sort_column=self._sort_column,
+            sort_ascending=self._sort_ascending,
+        )
         self.endResetModel()
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:  # noqa: N802
+        """Handle column header click for sorting."""
+        sort_col = self.SORTABLE_COLUMNS.get(column)
+        if sort_col is None:
+            return  # Column not sortable
+
+        ascending = order == Qt.SortOrder.AscendingOrder
+        self.refresh(
+            search=self._search,
+            tag_id=self._tag_id,
+            page=0,  # Reset to first page on sort change
+            page_size=self._page_size,
+            sort_column=sort_col,
+            sort_ascending=ascending,
+        )
+
+    @property
+    def current_page(self) -> int:
+        return self._current_page
+
+    @property
+    def total_pages(self) -> int:
+        if self._total_count == 0:
+            return 1
+        return (self._total_count - 1) // self._page_size + 1
+
+    @property
+    def total_count(self) -> int:
+        return self._total_count
+
+    @property
+    def page_size(self) -> int:
+        return self._page_size
+
+    @property
+    def sort_column(self) -> str:
+        return self._sort_column
+
+    @property
+    def sort_ascending(self) -> bool:
+        return self._sort_ascending
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
         if parent.isValid():
@@ -56,25 +155,36 @@ class HistoryModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
-                return row.url
+                # Row number: absolute position in the filtered/sorted result
+                return str(self._current_page * self._page_size + index.row() + 1)
             if col == 1:
-                return self._status_text(row.status)
+                return row.url
             if col == 2:
-                return str(row.download_count)
+                return self._status_text(row.status)
             if col == 3:
-                return row.date_added
+                return str(row.download_count)
             if col == 4:
-                return row.date_processed or ""
+                return row.date_added
             if col == 5:
+                return row.date_processed or ""
+            if col == 6:
                 return row.last_error or ""
+            if col == 7:
+                return ", ".join(row.tags) if row.tags else ""
 
         if role == Qt.ItemDataRole.ToolTipRole:
-            if col == 5 and row.last_error:
+            if col == 6 and row.last_error:
                 return row.last_error
+            if col == 7 and row.tags:
+                return "\n".join(row.tags)
 
         if role == Qt.ItemDataRole.ForegroundRole:
-            if col == 1:
+            if col == 2:
                 return self._status_color(row.status)
+
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if col in (0, 3):  # # and Downloads columns
+                return Qt.AlignmentFlag.AlignCenter
 
         return None
 

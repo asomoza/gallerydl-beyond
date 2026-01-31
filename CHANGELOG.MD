@@ -25,6 +25,12 @@
 - improved auto-update detection: now works for gallery-dl installed in the current venv (not just Python env mode)
 - live worker scaling: adjust concurrent downloads (1-8) while running; reducing workers requeues excess downloads
 - fix: "Stop this download" now works correctly (stopped downloads no longer immediately restart)
+- fix: archive URL extraction dialog now uses a scrollable list for large archives with many extractors
+- History tab pagination: navigate large databases efficiently with First/Prev/Next/Last buttons, page indicator, and configurable rows per page (50/100/200/500)
+- History tab row numbers: "#" column shows absolute position in the filtered/sorted results
+- History tab sorting: click column headers to sort by URL, Status, Downloads, Added, or Processed date (ascending/descending)
+- page size preference persists across app restarts
+- database performance: added indexes on date_processed, date_added, and url columns
 
 ## 0.0.1 - 2023-06-29
 

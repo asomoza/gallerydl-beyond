@@ -8,9 +8,8 @@ from PyQt6.QtWidgets import QHBoxLayout, QMainWindow, QPushButton, QTabWidget, Q
 from gallerydl_beyond.common import DEFAULT_DB_FILENAME, DatabaseManager, SettingsKeys
 from gallerydl_beyond.components.history_tab_widget import HistoryTabWidget
 from gallerydl_beyond.components.main_tab_widget import DownloadsTabWidget
-from gallerydl_beyond.dialogs.config_editor_dialog import ConfigEditorDialog
 from gallerydl_beyond.dialogs.database_dialog import DatabaseDialog
-from gallerydl_beyond.dialogs.settings_dialog import SettingsDialog
+from gallerydl_beyond.dialogs.gallerydl_options_dialog import GalleryDLOptionsDialog
 from gallerydl_beyond.dialogs.url_exists_dialog import UrlExistsDialog
 from gallerydl_beyond.gallerydl_utils.config_manager import ConfigManager
 from gallerydl_beyond.gallerydl_utils.gallerydl_manager import GalleryDLManager
@@ -68,13 +67,9 @@ class MainWindow(QMainWindow):
         manage_database_button.clicked.connect(self.open_database_dialog)
         toolbar.addWidget(manage_database_button)
 
-        settings_button = QPushButton("Settings")
-        settings_button.clicked.connect(self.open_settings_dialog)
-        toolbar.addWidget(settings_button)
-
-        config_button = QPushButton("Config")
-        config_button.clicked.connect(self.open_config_dialog)
-        toolbar.addWidget(config_button)
+        gallerydl_options_button = QPushButton("Gallery-dl Options")
+        gallerydl_options_button.clicked.connect(self.open_gallerydl_options_dialog)
+        toolbar.addWidget(gallerydl_options_button)
 
         toolbar.addStretch(1)
         layout.addLayout(toolbar)
@@ -96,6 +91,7 @@ class MainWindow(QMainWindow):
             on_force_redownload=self._history_force_redownload,
             on_resume=self._history_resume,
             on_skip=self._history_skip,
+            on_tags_changed=self._on_tags_changed,
         )
         self.history_tab.url_removed.connect(self._on_history_url_removed)
 
@@ -322,19 +318,19 @@ class MainWindow(QMainWindow):
         database_dialog.exec()
         # Refresh UI after dialog closes since database may have changed
         self._refresh_counts()
-        self.history_tab.refresh()
+        self.history_tab.refresh_tags()  # Refresh tag filter and table
 
-    def open_settings_dialog(self):
-        dialog = SettingsDialog(self.show_error, self.gallerydl_manager)
+    def open_gallerydl_options_dialog(self):
+        dialog = GalleryDLOptionsDialog(
+            self.show_error, self.gallerydl_manager, self.config_manager, self.config_path
+        )
         if dialog.exec():
-            self.start_up()
-
-    def open_config_dialog(self):
-        dialog = ConfigEditorDialog(self.show_error, self.config_manager, self.config_path)
-        if dialog.exec():
-            self.config_path = self.config_manager.ensure_exists(self.config_path)
-            self.downloads_tab.append_log_success("Config saved")
-            self.downloads_tab.append_log_line(f"Using config: {self.config_path}")
+            self.config_path = dialog.config_path
+            self.downloads_tab.append_log_success("Options saved")
+            if dialog.mode_changed:
+                self.start_up()
+            else:
+                self.downloads_tab.append_log_line(f"Using config: {self.config_path}")
 
     def show_error(self, message):
         self.logger.error(message)
@@ -379,6 +375,10 @@ class MainWindow(QMainWindow):
         self.db_manager.mark_skipped(url_id)
         self.downloads_tab.append_log_line(f"Marked as skipped (id={url_id})")
         self._refresh_counts()
+        self.history_tab.refresh()
+
+    def _on_tags_changed(self) -> None:
+        """Called when tags are modified. Refresh history to show updated tags."""
         self.history_tab.refresh()
 
     def _on_stop_download(self, worker_id: int) -> None:

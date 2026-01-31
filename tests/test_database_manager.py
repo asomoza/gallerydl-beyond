@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gallerydl_beyond.common.constants import UrlStatus
-from gallerydl_beyond.common.database_manager import DatabaseManager, UrlRow
+from gallerydl_beyond.common.database_manager import DatabaseManager, TagRow, UrlRow
 
 
 class TestDatabaseCreation:
@@ -851,3 +851,489 @@ class TestExportImportUrls:
 
         assert added == 1
         assert skipped == 0
+
+
+class TestTagCreation:
+    """Test tag tables creation."""
+
+    def test_ensure_database_creates_tags_table(self, tmp_db_path: Path):
+        """ensure_database() should create the tags table."""
+        manager = DatabaseManager(db_path=tmp_db_path, mutex=MagicMock())
+        manager.ensure_database()
+
+        conn = sqlite3.connect(tmp_db_path)
+        cursor = conn.execute("PRAGMA table_info(tags);")
+        columns = {row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        assert columns == {"id", "name", "date_created"}
+
+    def test_ensure_database_creates_url_tags_table(self, tmp_db_path: Path):
+        """ensure_database() should create the url_tags table."""
+        manager = DatabaseManager(db_path=tmp_db_path, mutex=MagicMock())
+        manager.ensure_database()
+
+        conn = sqlite3.connect(tmp_db_path)
+        cursor = conn.execute("PRAGMA table_info(url_tags);")
+        columns = {row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        assert columns == {"url_id", "tag_id", "date_assigned"}
+
+
+class TestTagCRUD:
+    """Test tag create/read/update/delete operations."""
+
+    def test_create_tag_returns_id(self, db_manager: DatabaseManager):
+        """create_tag() should return the new tag id."""
+        tag_id = db_manager.create_tag("test-tag")
+
+        assert tag_id is not None
+        assert isinstance(tag_id, int)
+        assert tag_id > 0
+
+    def test_create_tag_stores_tag(self, db_manager: DatabaseManager):
+        """create_tag() should store the tag in the database."""
+        tag_id = db_manager.create_tag("my-tag")
+
+        tag = db_manager.get_tag_by_id(tag_id)
+        assert tag is not None
+        assert tag.name == "my-tag"
+        assert tag.date_created is not None
+
+    def test_create_tag_duplicate_returns_none(self, db_manager: DatabaseManager):
+        """Creating a duplicate tag should return None."""
+        db_manager.create_tag("duplicate")
+        result = db_manager.create_tag("duplicate")
+
+        assert result is None
+
+    def test_create_tag_strips_whitespace(self, db_manager: DatabaseManager):
+        """create_tag() should strip whitespace from name."""
+        tag_id = db_manager.create_tag("  my-tag  ")
+
+        tag = db_manager.get_tag_by_id(tag_id)
+        assert tag.name == "my-tag"
+
+    def test_create_tag_empty_raises(self, db_manager: DatabaseManager):
+        """create_tag() should raise ValueError for empty name."""
+        with pytest.raises(ValueError, match="tag name cannot be empty"):
+            db_manager.create_tag("")
+
+        with pytest.raises(ValueError, match="tag name cannot be empty"):
+            db_manager.create_tag("   ")
+
+    def test_list_tags_empty(self, db_manager: DatabaseManager):
+        """list_tags() should return empty list when no tags."""
+        tags = db_manager.list_tags()
+        assert tags == []
+
+    def test_list_tags_returns_all(self, db_manager: DatabaseManager):
+        """list_tags() should return all tags sorted by name."""
+        db_manager.create_tag("zebra")
+        db_manager.create_tag("apple")
+        db_manager.create_tag("mango")
+
+        tags = db_manager.list_tags()
+
+        assert len(tags) == 3
+        assert tags[0].name == "apple"
+        assert tags[1].name == "mango"
+        assert tags[2].name == "zebra"
+
+    def test_rename_tag(self, db_manager: DatabaseManager):
+        """rename_tag() should update the tag name."""
+        tag_id = db_manager.create_tag("old-name")
+
+        result = db_manager.rename_tag(tag_id, "new-name")
+
+        assert result is True
+        tag = db_manager.get_tag_by_id(tag_id)
+        assert tag.name == "new-name"
+
+    def test_rename_tag_not_found(self, db_manager: DatabaseManager):
+        """rename_tag() should return False for non-existing tag."""
+        result = db_manager.rename_tag(9999, "new-name")
+        assert result is False
+
+    def test_rename_tag_conflict(self, db_manager: DatabaseManager):
+        """rename_tag() should return False when name conflicts."""
+        db_manager.create_tag("existing")
+        tag_id = db_manager.create_tag("to-rename")
+
+        result = db_manager.rename_tag(tag_id, "existing")
+
+        assert result is False
+
+    def test_rename_tag_empty_raises(self, db_manager: DatabaseManager):
+        """rename_tag() should raise ValueError for empty name."""
+        tag_id = db_manager.create_tag("test")
+
+        with pytest.raises(ValueError, match="tag name cannot be empty"):
+            db_manager.rename_tag(tag_id, "")
+
+    def test_delete_tag(self, db_manager: DatabaseManager):
+        """delete_tag() should remove the tag."""
+        tag_id = db_manager.create_tag("to-delete")
+
+        result = db_manager.delete_tag(tag_id)
+
+        assert result is True
+        assert db_manager.get_tag_by_id(tag_id) is None
+
+    def test_delete_tag_not_found(self, db_manager: DatabaseManager):
+        """delete_tag() should return False for non-existing tag."""
+        result = db_manager.delete_tag(9999)
+        assert result is False
+
+    def test_get_tag_by_id_found(self, db_manager: DatabaseManager):
+        """get_tag_by_id() should return TagRow for existing tag."""
+        tag_id = db_manager.create_tag("my-tag")
+
+        tag = db_manager.get_tag_by_id(tag_id)
+
+        assert tag is not None
+        assert isinstance(tag, TagRow)
+        assert tag.name == "my-tag"
+
+    def test_get_tag_by_id_not_found(self, db_manager: DatabaseManager):
+        """get_tag_by_id() should return None for non-existing tag."""
+        tag = db_manager.get_tag_by_id(9999)
+        assert tag is None
+
+
+class TestUrlTagAssociation:
+    """Test URL-tag association methods."""
+
+    def test_assign_tag_to_url(self, db_manager: DatabaseManager):
+        """assign_tag_to_url() should create an association."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+
+        result = db_manager.assign_tag_to_url(url_id, tag_id)
+
+        assert result is True
+        tags = db_manager.get_tags_for_url(url_id)
+        assert len(tags) == 1
+        assert tags[0].name == "my-tag"
+
+    def test_assign_tag_duplicate(self, db_manager: DatabaseManager):
+        """Assigning the same tag twice should return False."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+
+        db_manager.assign_tag_to_url(url_id, tag_id)
+        result = db_manager.assign_tag_to_url(url_id, tag_id)
+
+        assert result is False
+
+    def test_remove_tag_from_url(self, db_manager: DatabaseManager):
+        """remove_tag_from_url() should remove the association."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+        db_manager.assign_tag_to_url(url_id, tag_id)
+
+        result = db_manager.remove_tag_from_url(url_id, tag_id)
+
+        assert result is True
+        tags = db_manager.get_tags_for_url(url_id)
+        assert tags == []
+
+    def test_remove_tag_not_assigned(self, db_manager: DatabaseManager):
+        """remove_tag_from_url() should return False when not assigned."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+
+        result = db_manager.remove_tag_from_url(url_id, tag_id)
+
+        assert result is False
+
+    def test_get_tags_for_url_empty(self, db_manager: DatabaseManager):
+        """get_tags_for_url() should return empty list when no tags."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+
+        tags = db_manager.get_tags_for_url(url_id)
+
+        assert tags == []
+
+    def test_get_tags_for_url_multiple(self, db_manager: DatabaseManager):
+        """get_tags_for_url() should return all assigned tags sorted."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag1 = db_manager.create_tag("zebra")
+        tag2 = db_manager.create_tag("apple")
+        db_manager.assign_tag_to_url(url_id, tag1)
+        db_manager.assign_tag_to_url(url_id, tag2)
+
+        tags = db_manager.get_tags_for_url(url_id)
+
+        assert len(tags) == 2
+        assert tags[0].name == "apple"
+        assert tags[1].name == "zebra"
+
+    def test_set_url_tags(self, db_manager: DatabaseManager):
+        """set_url_tags() should replace all tags for a URL."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag1 = db_manager.create_tag("tag1")
+        tag2 = db_manager.create_tag("tag2")
+        tag3 = db_manager.create_tag("tag3")
+
+        # Assign initial tags
+        db_manager.assign_tag_to_url(url_id, tag1)
+        db_manager.assign_tag_to_url(url_id, tag2)
+
+        # Replace with new set
+        db_manager.set_url_tags(url_id, [tag2, tag3])
+
+        tags = db_manager.get_tags_for_url(url_id)
+        tag_names = [t.name for t in tags]
+        assert sorted(tag_names) == ["tag2", "tag3"]
+
+    def test_set_url_tags_empty(self, db_manager: DatabaseManager):
+        """set_url_tags() with empty list should remove all tags."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+        db_manager.assign_tag_to_url(url_id, tag_id)
+
+        db_manager.set_url_tags(url_id, [])
+
+        tags = db_manager.get_tags_for_url(url_id)
+        assert tags == []
+
+    def test_delete_tag_cascade(self, db_manager: DatabaseManager):
+        """Deleting a tag should cascade to url_tags."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+        db_manager.assign_tag_to_url(url_id, tag_id)
+
+        db_manager.delete_tag(tag_id)
+
+        tags = db_manager.get_tags_for_url(url_id)
+        assert tags == []
+
+    def test_delete_url_cascade(self, db_manager: DatabaseManager):
+        """Deleting a URL should cascade to url_tags."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag_id = db_manager.create_tag("my-tag")
+        db_manager.assign_tag_to_url(url_id, tag_id)
+
+        db_manager.delete_url(url_id)
+
+        # Tag should still exist
+        tag = db_manager.get_tag_by_id(tag_id)
+        assert tag is not None
+
+
+class TestCountUrls:
+    """Test URL counting for pagination."""
+
+    def test_count_urls_no_filter(self, db_manager: DatabaseManager):
+        """count_urls() should return total count without filters."""
+        db_manager.add_url("https://example.com/1")
+        db_manager.add_url("https://example.com/2")
+        db_manager.add_url("https://example.com/3")
+
+        count = db_manager.count_urls()
+
+        assert count == 3
+
+    def test_count_urls_empty(self, db_manager: DatabaseManager):
+        """count_urls() should return 0 for empty database."""
+        count = db_manager.count_urls()
+        assert count == 0
+
+    def test_count_urls_with_search(self, db_manager: DatabaseManager):
+        """count_urls() should filter by search term."""
+        db_manager.add_url("https://example.com/cats")
+        db_manager.add_url("https://example.com/dogs")
+        db_manager.add_url("https://other.com/cats")
+
+        count = db_manager.count_urls(search="cats")
+
+        assert count == 2
+
+    def test_count_urls_with_tag(self, db_manager: DatabaseManager):
+        """count_urls() should filter by tag."""
+        url1 = db_manager.add_url("https://example.com/tagged1")
+        url2 = db_manager.add_url("https://example.com/tagged2")
+        db_manager.add_url("https://example.com/untagged")
+        tag_id = db_manager.create_tag("my-tag")
+        db_manager.assign_tag_to_url(url1, tag_id)
+        db_manager.assign_tag_to_url(url2, tag_id)
+
+        count = db_manager.count_urls(tag_id=tag_id)
+
+        assert count == 2
+
+    def test_count_urls_combined_filters(self, db_manager: DatabaseManager):
+        """count_urls() should combine search and tag filters."""
+        url1 = db_manager.add_url("https://example.com/cats")
+        url2 = db_manager.add_url("https://example.com/dogs")
+        url3 = db_manager.add_url("https://other.com/cats")
+        tag_id = db_manager.create_tag("animals")
+        db_manager.assign_tag_to_url(url1, tag_id)
+        db_manager.assign_tag_to_url(url3, tag_id)
+
+        count = db_manager.count_urls(search="example", tag_id=tag_id)
+
+        assert count == 1
+
+
+class TestListUrlsWithOffset:
+    """Test list_urls with offset for pagination."""
+
+    def test_list_urls_with_offset(self, db_manager: DatabaseManager):
+        """list_urls() should skip rows based on offset."""
+        for i in range(10):
+            db_manager.add_url(f"https://example.com/{i}")
+
+        # Get second page (5 items per page, page 2)
+        urls = db_manager.list_urls(limit=5, offset=5)
+
+        assert len(urls) == 5
+
+    def test_list_urls_offset_beyond_end(self, db_manager: DatabaseManager):
+        """list_urls() should return empty list when offset is beyond end."""
+        db_manager.add_url("https://example.com/1")
+        db_manager.add_url("https://example.com/2")
+
+        urls = db_manager.list_urls(offset=100)
+
+        assert urls == []
+
+    def test_list_urls_offset_with_filter(self, db_manager: DatabaseManager):
+        """list_urls() should apply offset after filtering."""
+        for i in range(10):
+            db_manager.add_url(f"https://example.com/cats/{i}")
+        for i in range(10):
+            db_manager.add_url(f"https://example.com/dogs/{i}")
+
+        # Get second page of cats (3 per page)
+        urls = db_manager.list_urls(search="cats", limit=3, offset=3)
+
+        assert len(urls) == 3
+        assert all("cats" in u.url for u in urls)
+
+
+class TestListUrlsSorting:
+    """Test list_urls sorting functionality."""
+
+    def test_list_urls_sort_by_url_ascending(self, db_manager: DatabaseManager):
+        """list_urls() should sort by URL ascending."""
+        db_manager.add_url("https://example.com/zebra")
+        db_manager.add_url("https://example.com/apple")
+        db_manager.add_url("https://example.com/mango")
+
+        urls = db_manager.list_urls(sort_column="url", sort_ascending=True)
+
+        assert len(urls) == 3
+        assert urls[0].url == "https://example.com/apple"
+        assert urls[1].url == "https://example.com/mango"
+        assert urls[2].url == "https://example.com/zebra"
+
+    def test_list_urls_sort_by_url_descending(self, db_manager: DatabaseManager):
+        """list_urls() should sort by URL descending."""
+        db_manager.add_url("https://example.com/zebra")
+        db_manager.add_url("https://example.com/apple")
+        db_manager.add_url("https://example.com/mango")
+
+        urls = db_manager.list_urls(sort_column="url", sort_ascending=False)
+
+        assert len(urls) == 3
+        assert urls[0].url == "https://example.com/zebra"
+        assert urls[1].url == "https://example.com/mango"
+        assert urls[2].url == "https://example.com/apple"
+
+    def test_list_urls_sort_by_status(self, db_manager: DatabaseManager):
+        """list_urls() should sort by status."""
+        db_manager.add_url("https://example.com/pending")
+        db_manager.add_url("https://example.com/completed")
+        db_manager.add_url("https://example.com/failed")
+
+        row = db_manager.get_by_url("https://example.com/completed")
+        db_manager.mark_completed(row.id)
+        row = db_manager.get_by_url("https://example.com/failed")
+        db_manager.mark_failed(row.id, "Error")
+
+        urls = db_manager.list_urls(sort_column="status", sort_ascending=True)
+
+        assert len(urls) == 3
+        # Status 0=pending, 2=completed, 3=failed
+        assert urls[0].status == UrlStatus.PENDING
+        assert urls[1].status == UrlStatus.COMPLETED
+        assert urls[2].status == UrlStatus.FAILED
+
+    def test_list_urls_sort_by_id(self, db_manager: DatabaseManager):
+        """list_urls() should sort by id."""
+        id1 = db_manager.add_url("https://example.com/first")
+        id2 = db_manager.add_url("https://example.com/second")
+        id3 = db_manager.add_url("https://example.com/third")
+
+        urls = db_manager.list_urls(sort_column="id", sort_ascending=True)
+
+        assert len(urls) == 3
+        assert urls[0].id == id1
+        assert urls[1].id == id2
+        assert urls[2].id == id3
+
+    def test_list_urls_sort_invalid_column_uses_default(self, db_manager: DatabaseManager):
+        """list_urls() should use default sort for invalid column."""
+        db_manager.add_url("https://example.com/test")
+
+        # Should not raise, uses default date_processed sort
+        urls = db_manager.list_urls(sort_column="invalid_column")
+
+        assert len(urls) == 1
+
+
+class TestListUrlsWithTags:
+    """Test list_urls with tag filtering and tag column."""
+
+    def test_list_urls_includes_tags(self, db_manager: DatabaseManager):
+        """list_urls() should include tags in the UrlRow."""
+        url_id = db_manager.add_url("https://example.com/gallery")
+        tag1 = db_manager.create_tag("alpha")
+        tag2 = db_manager.create_tag("beta")
+        db_manager.assign_tag_to_url(url_id, tag1)
+        db_manager.assign_tag_to_url(url_id, tag2)
+
+        urls = db_manager.list_urls()
+
+        assert len(urls) == 1
+        # Tags should be sorted alphabetically in the tuple
+        assert urls[0].tags == ("alpha", "beta")
+
+    def test_list_urls_empty_tags(self, db_manager: DatabaseManager):
+        """list_urls() should return empty tags tuple when no tags."""
+        db_manager.add_url("https://example.com/gallery")
+
+        urls = db_manager.list_urls()
+
+        assert len(urls) == 1
+        assert urls[0].tags == ()
+
+    def test_list_urls_filter_by_tag(self, db_manager: DatabaseManager):
+        """list_urls(tag_id=X) should only return URLs with that tag."""
+        url1 = db_manager.add_url("https://example.com/tagged")
+        db_manager.add_url("https://example.com/untagged")
+        tag_id = db_manager.create_tag("my-tag")
+        db_manager.assign_tag_to_url(url1, tag_id)
+
+        urls = db_manager.list_urls(tag_id=tag_id)
+
+        assert len(urls) == 1
+        assert urls[0].url == "https://example.com/tagged"
+
+    def test_list_urls_filter_combined(self, db_manager: DatabaseManager):
+        """list_urls() should combine search and tag filters."""
+        url1 = db_manager.add_url("https://example.com/cats")
+        url2 = db_manager.add_url("https://example.com/dogs")
+        url3 = db_manager.add_url("https://other.com/cats")
+        tag_id = db_manager.create_tag("animals")
+        db_manager.assign_tag_to_url(url1, tag_id)
+        db_manager.assign_tag_to_url(url3, tag_id)
+
+        # Filter by both search and tag
+        urls = db_manager.list_urls(search="example", tag_id=tag_id)
+
+        assert len(urls) == 1
+        assert urls[0].url == "https://example.com/cats"
