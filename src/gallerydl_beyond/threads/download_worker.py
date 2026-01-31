@@ -43,6 +43,7 @@ class DownloadWorker(QThread):
 
         self._stop_requested = False
         self._mark_as_skipped = False  # If True, mark as SKIPPED instead of STOPPED when stopping
+        self._mark_as_requeue = False  # If True, mark as PENDING instead of STOPPED when stopping
         self._process: subprocess.Popen[str] | None = None
 
         self._skipped_count = 0
@@ -72,6 +73,11 @@ class DownloadWorker(QThread):
     def request_skip(self) -> None:
         """Stop the download and mark it as skipped instead of stopped."""
         self._mark_as_skipped = True
+        self.request_stop()
+
+    def request_requeue(self) -> None:
+        """Stop the download and put it back in the queue as PENDING."""
+        self._mark_as_requeue = True
         self.request_stop()
 
     def _popen_kwargs(self) -> dict:
@@ -136,7 +142,10 @@ class DownloadWorker(QThread):
                 returncode = self._process.wait()
 
             if self._stop_requested:
-                if self._mark_as_skipped:
+                if self._mark_as_requeue:
+                    self._db.mark_pending(self._row.id)
+                    self.url_failed.emit(self._worker_id, self._row.id, "Requeued")
+                elif self._mark_as_skipped:
                     self._db.mark_skipped(self._row.id)
                     self.url_failed.emit(self._worker_id, self._row.id, "Skipped")
                 else:

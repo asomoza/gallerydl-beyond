@@ -395,6 +395,14 @@ class DatabaseManager:
                 (UrlStatus.FAILED, error, url_id),
             )
 
+    def mark_pending(self, url_id: int) -> None:
+        """Mark a URL as pending (put it back in the queue)."""
+        with self._locked(), self._connect() as conn:
+            conn.execute(
+                "UPDATE urls SET status = ?, last_error = NULL WHERE id = ?;",
+                (UrlStatus.PENDING, url_id),
+            )
+
     def mark_stopped(self, url_id: int) -> None:
         """Mark a URL as stopped (user manually stopped the download)."""
         with self._locked(), self._connect() as conn:

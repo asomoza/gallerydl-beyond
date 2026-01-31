@@ -421,6 +421,24 @@ class TestStatusUpdates:
         assert updated.status == UrlStatus.FAILED
         assert updated.last_error == "Connection timeout"
 
+    def test_mark_pending(self, db_manager: DatabaseManager):
+        """mark_pending() should set status to PENDING and clear last_error."""
+        db_manager.add_url("https://example.com/gallery")
+        row = db_manager.get_by_url("https://example.com/gallery")
+
+        # First mark it as something else with an error
+        db_manager.mark_failed(row.id, "Some error")
+        failed = db_manager.get_by_url("https://example.com/gallery")
+        assert failed.status == UrlStatus.FAILED
+        assert failed.last_error == "Some error"
+
+        # Now mark it pending again
+        db_manager.mark_pending(row.id)
+
+        updated = db_manager.get_by_url("https://example.com/gallery")
+        assert updated.status == UrlStatus.PENDING
+        assert updated.last_error is None
+
     def test_mark_stopped(self, db_manager: DatabaseManager):
         """mark_stopped() should set status and store message."""
         db_manager.add_url("https://example.com/gallery")

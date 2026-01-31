@@ -226,6 +226,7 @@ class TestWorkerProperties:
                 self._row = row
                 self._stop_requested = False
                 self._mark_as_skipped = False
+                self._mark_as_requeue = False
 
             @property
             def worker_id(self) -> int:
@@ -244,6 +245,10 @@ class TestWorkerProperties:
 
             def request_skip(self):
                 self._mark_as_skipped = True
+                self.request_stop()
+
+            def request_requeue(self):
+                self._mark_as_requeue = True
                 self.request_stop()
 
         row = UrlRow(
@@ -288,6 +293,16 @@ class TestWorkerProperties:
         mock_worker.request_skip()
 
         assert mock_worker._mark_as_skipped is True
+        assert mock_worker._stop_requested is True
+
+    def test_request_requeue(self, mock_worker):
+        """request_requeue() should set requeue flag and stop flag."""
+        assert mock_worker._mark_as_requeue is False
+        assert mock_worker._stop_requested is False
+
+        mock_worker.request_requeue()
+
+        assert mock_worker._mark_as_requeue is True
         assert mock_worker._stop_requested is True
 
 

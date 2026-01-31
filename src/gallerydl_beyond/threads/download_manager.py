@@ -54,8 +54,24 @@ class DownloadManager(QObject):
         return self._paused
 
     def set_max_workers(self, count: int) -> None:
-        self._max_workers = max(1, int(count))
-        if self._running and not self._paused:
+        old_max = self._max_workers
+        self._max_workers = max(1, min(8, int(count)))
+
+        if not self._running:
+            return
+
+        if self._max_workers < old_max:
+            # Reduce workers: stop excess and requeue their URLs
+            excess = len(self._workers) - self._max_workers
+            if excess > 0:
+                # Pick workers to stop (highest IDs first to keep older downloads running)
+                workers_to_stop = sorted(self._workers.keys(), reverse=True)[:excess]
+                for worker_id in workers_to_stop:
+                    worker = self._workers.get(worker_id)
+                    if worker:
+                        worker.request_requeue()
+        elif self._max_workers > old_max and not self._paused:
+            # Increase workers: try to fill new slots
             self._fill_workers()
 
     def start(self) -> None:

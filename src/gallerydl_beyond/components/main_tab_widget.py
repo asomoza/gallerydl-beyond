@@ -49,7 +49,7 @@ class DownloadsTabWidget(QWidget):
         self.stop_button.setEnabled(False)
 
         self.max_concurrent = QSpinBox()
-        self.max_concurrent.setRange(1, 5)
+        self.max_concurrent.setRange(1, 8)
         self.max_concurrent.setValue(int(self._settings.value(SettingsKeys.MAX_CONCURRENT_DOWNLOADS, 2)))
         self.max_concurrent.valueChanged.connect(self._on_max_concurrent_changed)
 

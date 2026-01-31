@@ -23,6 +23,8 @@
 - import/export URLs to text files
 - gallery-dl archive import: merge archives and extract gallery URLs from external archive databases
 - improved auto-update detection: now works for gallery-dl installed in the current venv (not just Python env mode)
+- live worker scaling: adjust concurrent downloads (1-8) while running; reducing workers requeues excess downloads
+- fix: "Stop this download" now works correctly (stopped downloads no longer immediately restart)
 
 ## 0.0.1 - 2023-06-29
 

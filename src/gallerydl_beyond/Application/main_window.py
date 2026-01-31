@@ -164,7 +164,14 @@ class MainWindow(QMainWindow):
     def _on_max_concurrent_changed(self, value: int) -> None:
         manager = self.download_manager
         if manager and manager.is_running:
+            old_count = len(manager._workers)
             manager.set_max_workers(int(value))
+            new_max = int(value)
+            if old_count > new_max:
+                excess = old_count - new_max
+                self.downloads_tab.append_log_line(f"Reducing to {new_max} workers (requeuing {excess} download(s))")
+            elif new_max > old_count:
+                self.downloads_tab.append_log_line(f"Increasing to {new_max} workers")
 
     def _wire_download_manager(self, manager: DownloadManager) -> None:
         manager.all_started.connect(lambda: self.downloads_tab.append_log_line("Downloads started"))
