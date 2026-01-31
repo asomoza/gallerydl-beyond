@@ -93,7 +93,9 @@ class StartupWorker(QThread):
                             self.log.emit(
                                 "warning", f"gallery-dl out of date (installed {installed}, latest {latest})"
                             )
-                            if gallerydl_mode == "python":
+                            # Check if we can auto-update: python mode, or system path inside current venv
+                            can_update = gallerydl_mode == "python" or self._is_in_current_venv(gallerydl_display)
+                            if can_update:
                                 self.log.emit("info", "Attempting to update gallery-dl in current env...")
                                 updated, update_message = self._try_update_in_current_env()
                                 if updated:
@@ -160,6 +162,17 @@ class StartupWorker(QThread):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0)
             return result.returncode == 0
+        except Exception:
+            return False
+
+    def _is_in_current_venv(self, path: str | None) -> bool:
+        """Check if the given path is inside the current Python environment (venv)."""
+        if not path:
+            return False
+        try:
+            resolved = Path(path).resolve()
+            venv_prefix = Path(sys.prefix).resolve()
+            return str(resolved).startswith(str(venv_prefix))
         except Exception:
             return False
 

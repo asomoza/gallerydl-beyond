@@ -28,6 +28,12 @@ class MainWindow(QMainWindow):
         self.logger = logging.getLogger(__name__)
 
         self.db_manager = DatabaseManager(DEFAULT_DB_FILENAME)
+        self.db_manager.ensure_database()
+
+        # Reset any URLs left in IN_PROGRESS state from a previous session
+        reset_count = self.db_manager.reset_in_progress_to_stopped()
+        if reset_count > 0:
+            logging.getLogger(__name__).info(f"Reset {reset_count} interrupted download(s) to stopped")
 
         self.settings = QSettings("ZCode", "GalleryDLBeyond")
         self.gallerydl_manager = GalleryDLManager(self.settings)
@@ -81,11 +87,15 @@ class MainWindow(QMainWindow):
         self.downloads_tab.pause_clicked.connect(self._on_pause_resume)
         self.downloads_tab.stop_clicked.connect(self._on_stop_all)
         self.downloads_tab.max_concurrent_changed.connect(self._on_max_concurrent_changed)
+        self.downloads_tab.stop_download_clicked.connect(self._on_stop_download)
+        self.downloads_tab.skip_download_clicked.connect(self._on_skip_download)
 
         self.history_tab = HistoryTabWidget(
             db_manager=self.db_manager,
             on_check_new=self._history_check_new,
             on_force_redownload=self._history_force_redownload,
+            on_resume=self._history_resume,
+            on_skip=self._history_skip,
         )
         self.history_tab.url_removed.connect(self._on_history_url_removed)
 
@@ -167,8 +177,8 @@ class MainWindow(QMainWindow):
             lambda wid, url_id, err: self._on_worker_done(wid, f"Failed (id={url_id}): {err}")
         )
 
-    def _on_queue_updated(self, pending: int, active: int) -> None:
-        self.downloads_tab.set_counts(pending, active)
+    def _on_queue_updated(self, pending: int, stopped: int, active: int) -> None:
+        self.downloads_tab.set_counts(pending, stopped, active)
 
     def _on_downloads_finished(self) -> None:
         self.downloads_tab.append_log_line("All downloads finished")
@@ -177,8 +187,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_counts(self) -> None:
         try:
-            pending, active = self.db_manager.get_counts()
-            self.downloads_tab.set_counts(pending, active)
+            pending, stopped, active = self.db_manager.get_counts()
+            self.downloads_tab.set_counts(pending, stopped, active)
         except Exception:
             self.logger.exception("Failed to get DB counts")
 
@@ -195,6 +205,7 @@ class MainWindow(QMainWindow):
                 self.downloads_tab.url_input.clear()
                 self._refresh_counts()
                 self.history_tab.refresh()
+                self._try_auto_start()
                 return
 
             dialog = UrlExistsDialog(self.show_error, url)
@@ -208,20 +219,36 @@ class MainWindow(QMainWindow):
                     self.downloads_tab.append_log_line(f"Re-queued (check new): {url}")
                     self._refresh_counts()
                     self.history_tab.refresh()
+                    self._try_auto_start()
             elif action == "force":
                 updated = self.db_manager.requeue_existing_url(url, check_new_only=False, force_redownload=True)
                 if updated is not None:
                     self.downloads_tab.append_log_line(f"Re-queued (force): {url}")
                     self._refresh_counts()
                     self.history_tab.refresh()
+                    self._try_auto_start()
         except Exception as e:
             self.logger.exception("Failed to add URL")
             self.downloads_tab.append_log_error("URL add failed")
             self.downloads_tab.append_log_line(str(e))
 
+    def _try_auto_start(self) -> None:
+        """Try to start downloading newly added URLs if the manager is running."""
+        if self.download_manager and self.download_manager.is_running:
+            self.download_manager.try_fill_workers()
+
     def closeEvent(self, event):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("windowState", self.saveState())
+
+        # Stop all running downloads gracefully
+        if self.download_manager and self.download_manager.is_running:
+            self.download_manager.stop_all()
+            # Wait for workers to finish (they will mark URLs as STOPPED)
+            for worker in list(self.download_manager._workers.values()):
+                worker.wait(5000)  # Wait up to 5 seconds per worker
+
+        event.accept()
 
     def start_up(self):
         # If the user changes settings while downloads are running, stop them.
@@ -284,8 +311,11 @@ class MainWindow(QMainWindow):
         self.history_tab.refresh()
 
     def open_database_dialog(self):
-        database_dialog = DatabaseDialog(self.show_error)
+        database_dialog = DatabaseDialog(self.db_manager, self.config_path, self.show_error)
         database_dialog.exec()
+        # Refresh UI after dialog closes since database may have changed
+        self._refresh_counts()
+        self.history_tab.refresh()
 
     def open_settings_dialog(self):
         dialog = SettingsDialog(self.show_error, self.gallerydl_manager)
@@ -305,6 +335,7 @@ class MainWindow(QMainWindow):
     def _on_worker_started(self, worker_id: int, url: str) -> None:
         self.downloads_tab.set_active(worker_id, url)
         self.downloads_tab.append_log_line(f"[{worker_id}] Starting: {url}")
+        self.history_tab.refresh()
 
     def _on_worker_done(self, worker_id: int, message: str) -> None:
         self.downloads_tab.clear_active(worker_id)
@@ -317,6 +348,7 @@ class MainWindow(QMainWindow):
             self.downloads_tab.append_log_line(f"Re-queued (check new): {url}")
             self._refresh_counts()
             self.history_tab.refresh()
+            self._try_auto_start()
 
     def _history_force_redownload(self, url: str) -> None:
         updated = self.db_manager.requeue_existing_url(url, check_new_only=False, force_redownload=True)
@@ -324,3 +356,32 @@ class MainWindow(QMainWindow):
             self.downloads_tab.append_log_line(f"Re-queued (force): {url}")
             self._refresh_counts()
             self.history_tab.refresh()
+            self._try_auto_start()
+
+    def _history_resume(self, url: str) -> None:
+        """Resume a stopped or failed download by re-queuing it."""
+        updated = self.db_manager.requeue_existing_url(url, check_new_only=False, force_redownload=False)
+        if updated is not None:
+            self.downloads_tab.append_log_line(f"Re-queued (resume): {url}")
+            self._refresh_counts()
+            self.history_tab.refresh()
+            self._try_auto_start()
+
+    def _history_skip(self, url_id: int) -> None:
+        """Mark a URL as skipped from history."""
+        self.db_manager.mark_skipped(url_id)
+        self.downloads_tab.append_log_line(f"Marked as skipped (id={url_id})")
+        self._refresh_counts()
+        self.history_tab.refresh()
+
+    def _on_stop_download(self, worker_id: int) -> None:
+        """Stop a specific download from the active list."""
+        if self.download_manager:
+            if self.download_manager.stop_worker(worker_id):
+                self.downloads_tab.append_log_line(f"[{worker_id}] Stopping...")
+
+    def _on_skip_download(self, worker_id: int) -> None:
+        """Skip a specific download from the active list (stop and mark as skipped)."""
+        if self.download_manager:
+            if self.download_manager.skip_worker(worker_id):
+                self.downloads_tab.append_log_line(f"[{worker_id}] Skipping...")

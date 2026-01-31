@@ -6,6 +6,9 @@ class UrlStatus:
     IN_PROGRESS = 1
     COMPLETED = 2
     FAILED = 3
+    STOPPED = 4              # User manually stopped
+    COMPLETED_PARTIAL = 5    # Completed but some files failed
+    SKIPPED = 6              # User marked URL to be skipped
 
 
 class SettingsKeys:

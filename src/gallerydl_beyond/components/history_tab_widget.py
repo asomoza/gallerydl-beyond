@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from gallerydl_beyond.common.constants import UrlStatus
 from gallerydl_beyond.common.database_manager import DatabaseManager
 from gallerydl_beyond.models.history_model import HistoryModel
 
@@ -22,12 +23,21 @@ class HistoryTabWidget(QWidget):
     url_removed = pyqtSignal(int, str)
 
     def __init__(
-        self, *, db_manager: DatabaseManager, on_check_new: callable, on_force_redownload: callable, parent=None
+        self,
+        *,
+        db_manager: DatabaseManager,
+        on_check_new: callable,
+        on_force_redownload: callable,
+        on_resume: callable | None = None,
+        on_skip: callable | None = None,
+        parent=None,
     ):
         super().__init__(parent)
         self._db = db_manager
         self._on_check_new = on_check_new
         self._on_force_redownload = on_force_redownload
+        self._on_resume = on_resume
+        self._on_skip = on_skip
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search URL...")
@@ -84,6 +94,13 @@ class HistoryTabWidget(QWidget):
         row = self.model.get_row(idx.row())
         return row.id if row else None
 
+    def _selected_row_status(self) -> int | None:
+        idx = self.table.currentIndex()
+        if not idx.isValid():
+            return None
+        row = self.model.get_row(idx.row())
+        return row.status if row else None
+
     def _open_context_menu(self, pos) -> None:
         # Ensure the row under the cursor is selected.
         index = self.table.indexAt(pos)
@@ -92,6 +109,7 @@ class HistoryTabWidget(QWidget):
 
         url = self._selected_url()
         url_id = self._selected_row_id()
+        status = self._selected_row_status()
         if not url:
             return
 
@@ -101,6 +119,24 @@ class HistoryTabWidget(QWidget):
         copy_url.triggered.connect(lambda: self._copy_to_clipboard(url))
         menu.addAction(copy_url)
         menu.addSeparator()
+
+        # Show "Resume download" for STOPPED or FAILED items
+        added_action = False
+        if status in (UrlStatus.STOPPED, UrlStatus.FAILED) and self._on_resume:
+            resume_action = QAction("Resume download", self)
+            resume_action.triggered.connect(lambda: self._on_resume(url))
+            menu.addAction(resume_action)
+            added_action = True
+
+        # Show "Skip" for items that are not IN_PROGRESS and not already SKIPPED
+        if status not in (UrlStatus.IN_PROGRESS, UrlStatus.SKIPPED) and self._on_skip:
+            skip_action = QAction("Skip", self)
+            skip_action.triggered.connect(lambda: self._on_skip(url_id))
+            menu.addAction(skip_action)
+            added_action = True
+
+        if added_action:
+            menu.addSeparator()
 
         check_new = QAction("Check for new files", self)
         check_new.triggered.connect(lambda: self._on_check_new(url))

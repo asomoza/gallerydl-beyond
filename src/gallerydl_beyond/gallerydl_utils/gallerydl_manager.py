@@ -104,10 +104,24 @@ class GalleryDLManager:
         return None
 
     def can_self_update(self, resolved: GalleryDLResolution) -> bool:
-        # Only safe to self-update the package in the current Python env.
-        return resolved.mode in {"python", "auto"} or (
-            resolved.mode == "system" and resolved.command and resolved.command[0] == sys.executable
-        )
+        """Check if we can safely auto-update gallery-dl.
+
+        Safe to update when:
+        - mode is 'python' (using python -m gallery_dl)
+        - resolved path is inside the current venv (sys.prefix)
+        """
+        if resolved.mode == "python":
+            return True
+        # Check if resolved path is inside current venv
+        if resolved.command:
+            try:
+                resolved_path = Path(resolved.command[0]).resolve()
+                venv_prefix = Path(sys.prefix).resolve()
+                if str(resolved_path).startswith(str(venv_prefix)):
+                    return True
+            except Exception:
+                pass
+        return False
 
     def try_update_in_current_env(self) -> tuple[bool, str]:
         """Attempts to update gallery-dl in the current Python environment using uv/pip.

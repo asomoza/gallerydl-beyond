@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,14 @@ from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from gallerydl_beyond.common.database_manager import DatabaseManager, UrlRow
+
+# Patterns that indicate a file download failed
+_FAILURE_PATTERNS = [
+    re.compile(r"\[download\]\[error\]", re.IGNORECASE),
+    re.compile(r"download:\s*Failed to download", re.IGNORECASE),
+    re.compile(r"\[error\].*failed", re.IGNORECASE),
+    re.compile(r"HttpError:", re.IGNORECASE),
+]
 
 
 class DownloadWorker(QThread):
@@ -33,7 +42,11 @@ class DownloadWorker(QThread):
         self._config_path = Path(config_path)
 
         self._stop_requested = False
+        self._mark_as_skipped = False  # If True, mark as SKIPPED instead of STOPPED when stopping
         self._process: subprocess.Popen[str] | None = None
+
+        self._skipped_count = 0
+        self._skipped_files: list[str] = []
 
     @property
     def worker_id(self) -> int:
@@ -56,6 +69,11 @@ class DownloadWorker(QThread):
             except Exception:
                 pass
 
+    def request_skip(self) -> None:
+        """Stop the download and mark it as skipped instead of stopped."""
+        self._mark_as_skipped = True
+        self.request_stop()
+
     def _popen_kwargs(self) -> dict:
         kwargs: dict = {}
         if sys.platform.startswith("win"):
@@ -64,6 +82,14 @@ class DownloadWorker(QThread):
             # Helps ensure we can terminate the subprocess cleanly.
             kwargs["start_new_session"] = True
         return kwargs
+
+    def _check_for_failure(self, line: str) -> None:
+        """Check if output line indicates a file download failure."""
+        for pattern in _FAILURE_PATTERNS:
+            if pattern.search(line):
+                self._skipped_count += 1
+                self._skipped_files.append(line)
+                break
 
     def run(self) -> None:
         self.url_started.emit(self._worker_id, self._row.id, self._row.url)
@@ -92,6 +118,7 @@ class DownloadWorker(QThread):
                 line = raw_line.rstrip("\n")
                 if line:
                     self.output.emit(self._worker_id, line)
+                    self._check_for_failure(line)
 
             if self._stop_requested:
                 try:
@@ -109,13 +136,22 @@ class DownloadWorker(QThread):
                 returncode = self._process.wait()
 
             if self._stop_requested:
-                self._db.mark_failed(self._row.id, "Stopped")
-                self.url_failed.emit(self._worker_id, self._row.id, "Stopped")
+                if self._mark_as_skipped:
+                    self._db.mark_skipped(self._row.id)
+                    self.url_failed.emit(self._worker_id, self._row.id, "Skipped")
+                else:
+                    self._db.mark_stopped(self._row.id)
+                    self.url_failed.emit(self._worker_id, self._row.id, "Stopped")
                 return
 
             if returncode == 0:
-                self._db.mark_completed(self._row.id)
-                self.url_completed.emit(self._worker_id, self._row.id)
+                if self._skipped_count > 0:
+                    errors = "\n".join(self._skipped_files[:10])  # Limit stored errors
+                    self._db.mark_completed_partial(self._row.id, self._skipped_count, errors)
+                    self.url_completed.emit(self._worker_id, self._row.id)
+                else:
+                    self._db.mark_completed(self._row.id)
+                    self.url_completed.emit(self._worker_id, self._row.id)
             else:
                 error = f"gallery-dl exited with code {returncode}"
                 self._db.mark_failed(self._row.id, error)

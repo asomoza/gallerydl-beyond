@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt6.QtGui import QColor
 
 from gallerydl_beyond.common.constants import UrlStatus
 from gallerydl_beyond.common.database_manager import DatabaseManager, UrlRow
@@ -71,6 +72,10 @@ class HistoryModel(QAbstractTableModel):
             if col == 5 and row.last_error:
                 return row.last_error
 
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if col == 1:
+                return self._status_color(row.status)
+
         return None
 
     def get_row(self, row_index: int) -> UrlRow | None:
@@ -88,4 +93,28 @@ class HistoryModel(QAbstractTableModel):
             return "Completed"
         if status == UrlStatus.FAILED:
             return "Failed"
+        if status == UrlStatus.STOPPED:
+            return "Stopped"
+        if status == UrlStatus.COMPLETED_PARTIAL:
+            return "Partial"
+        if status == UrlStatus.SKIPPED:
+            return "Skipped"
         return str(status)
+
+    @staticmethod
+    def _status_color(status: int) -> QColor | None:
+        if status == UrlStatus.PENDING:
+            return QColor("#808080")  # Gray
+        if status == UrlStatus.IN_PROGRESS:
+            return QColor("#3498db")  # Blue
+        if status == UrlStatus.COMPLETED:
+            return QColor("#27ae60")  # Green
+        if status == UrlStatus.FAILED:
+            return QColor("#e74c3c")  # Red
+        if status == UrlStatus.STOPPED:
+            return QColor("#e67e22")  # Orange
+        if status == UrlStatus.COMPLETED_PARTIAL:
+            return QColor("#f1c40f")  # Yellow
+        if status == UrlStatus.SKIPPED:
+            return QColor("#9b59b6")  # Purple
+        return None

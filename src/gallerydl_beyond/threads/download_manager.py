@@ -21,7 +21,7 @@ class DownloadManager(QObject):
     worker_completed = pyqtSignal(int, int)  # worker_id, url_id
     worker_failed = pyqtSignal(int, int, str)  # worker_id, url_id, error
 
-    queue_updated = pyqtSignal(int, int)  # pending_count, active_count
+    queue_updated = pyqtSignal(int, int, int)  # pending_count, stopped_count, active_count
 
     def __init__(
         self,
@@ -40,6 +40,7 @@ class DownloadManager(QObject):
         self._max_workers = max(1, int(max_workers))
         self._running = False
         self._paused = False
+        self._include_stopped = False  # Only True during initial start
 
         self._next_worker_id = 1
         self._workers: dict[int, DownloadWorker] = {}
@@ -62,6 +63,7 @@ class DownloadManager(QObject):
             return
         self._running = True
         self._paused = False
+        self._include_stopped = True  # Include stopped URLs on explicit Start
         self.all_started.emit()
         self._fill_workers()
 
@@ -84,10 +86,41 @@ class DownloadManager(QObject):
         for worker in workers:
             worker.request_stop()
 
+    def stop_worker(self, worker_id: int) -> bool:
+        """Stop a specific worker by worker_id. Returns True if found."""
+        worker = self._workers.get(worker_id)
+        if worker is None:
+            return False
+        worker.request_stop()
+        return True
+
+    def skip_worker(self, worker_id: int) -> bool:
+        """Stop a specific worker and mark it as skipped. Returns True if found."""
+        worker = self._workers.get(worker_id)
+        if worker is None:
+            return False
+        worker.request_skip()
+        return True
+
+    def get_worker_url_id(self, worker_id: int) -> int | None:
+        """Get the url_id for a worker. Returns None if worker not found."""
+        worker = self._workers.get(worker_id)
+        if worker is None:
+            return None
+        return worker.url_id
+
+    def try_fill_workers(self) -> None:
+        """Try to start new downloads if capacity is available.
+
+        Call this after adding new URLs to auto-start them.
+        """
+        if self._running and not self._paused:
+            self._fill_workers()
+
     def _emit_counts(self) -> None:
         try:
-            pending, active = self._db.get_counts()
-            self.queue_updated.emit(pending, active)
+            pending, stopped, active = self._db.get_counts()
+            self.queue_updated.emit(pending, stopped, active)
         except Exception:
             logger.exception("Failed to query counts")
 
@@ -97,7 +130,7 @@ class DownloadManager(QObject):
             return
 
         while self._running and (not self._paused) and len(self._workers) < self._max_workers:
-            row = self._db.claim_next_pending()
+            row = self._db.claim_next_pending(include_stopped=self._include_stopped)
             if row is None:
                 break
 
@@ -121,6 +154,8 @@ class DownloadManager(QObject):
             self._workers[worker_id] = worker
             worker.start()
 
+        # Reset flag after initial fill - subsequent fills only pick up PENDING URLs
+        self._include_stopped = False
         self._emit_counts()
 
         if self._running and not self._workers:

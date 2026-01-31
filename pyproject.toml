@@ -15,6 +15,10 @@ dependencies = [
 build = [
     "pyinstaller>=6.13.0",
 ]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
 
 [tool.ruff]
 line-length = 119
@@ -41,3 +45,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"

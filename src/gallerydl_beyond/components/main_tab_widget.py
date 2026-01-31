@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QMenu,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -23,6 +24,9 @@ class DownloadsTabWidget(QWidget):
     start_clicked = pyqtSignal()
     pause_clicked = pyqtSignal()
     stop_clicked = pyqtSignal()
+
+    stop_download_clicked = pyqtSignal(int)  # worker_id
+    skip_download_clicked = pyqtSignal(int)  # worker_id
 
     max_concurrent_changed = pyqtSignal(int)
 
@@ -54,6 +58,8 @@ class DownloadsTabWidget(QWidget):
 
         self.active_list = QListWidget()
         self.active_list.setMinimumHeight(90)
+        self.active_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.active_list.customContextMenuRequested.connect(self._open_active_context_menu)
 
         self.log_window = LogWindow()
 
@@ -106,8 +112,11 @@ class DownloadsTabWidget(QWidget):
             return True
         return False
 
-    def set_counts(self, pending: int, active: int) -> None:
-        self.status_label.setText(f"Queue: {pending} | Active: {active}")
+    def set_counts(self, pending: int, stopped: int, active: int) -> None:
+        if stopped > 0:
+            self.status_label.setText(f"Queue: {pending} | Stopped: {stopped} | Active: {active}")
+        else:
+            self.status_label.setText(f"Queue: {pending} | Active: {active}")
 
     def set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
@@ -147,3 +156,38 @@ class DownloadsTabWidget(QWidget):
     def _on_max_concurrent_changed(self, value: int) -> None:
         self._settings.setValue(SettingsKeys.MAX_CONCURRENT_DOWNLOADS, int(value))
         self.max_concurrent_changed.emit(int(value))
+
+    def _get_selected_worker_id(self) -> int | None:
+        """Extract worker_id from selected active list item."""
+        item = self.active_list.currentItem()
+        if item is None:
+            return None
+        text = item.text()
+        # Format is "[worker_id] url"
+        if text.startswith("[") and "]" in text:
+            try:
+                return int(text[1 : text.index("]")])
+            except ValueError:
+                return None
+        return None
+
+    def _open_active_context_menu(self, pos) -> None:
+        index = self.active_list.indexAt(pos)
+        if index.isValid():
+            self.active_list.setCurrentIndex(index)
+
+        worker_id = self._get_selected_worker_id()
+        if worker_id is None:
+            return
+
+        menu = QMenu(self)
+
+        stop_action = QAction("Stop this download", self)
+        stop_action.triggered.connect(lambda: self.stop_download_clicked.emit(worker_id))
+        menu.addAction(stop_action)
+
+        skip_action = QAction("Skip this download", self)
+        skip_action.triggered.connect(lambda: self.skip_download_clicked.emit(worker_id))
+        menu.addAction(skip_action)
+
+        menu.exec(self.active_list.viewport().mapToGlobal(pos))
