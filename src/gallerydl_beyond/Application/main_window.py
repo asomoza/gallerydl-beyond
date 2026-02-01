@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
     def _on_downloads_finished(self) -> None:
         self.downloads_tab.append_log_line("All downloads finished")
         self.downloads_tab.set_running(False)
-        self.history_tab.refresh()
+        self.history_tab.refresh(preserve_page=True)
 
     def _refresh_counts(self) -> None:
         try:
@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
                 self.downloads_tab.append_log_line(url)
                 self.downloads_tab.url_input.clear()
                 self._refresh_counts()
-                self.history_tab.refresh()
+                self.history_tab.refresh(preserve_page=True)
                 self._try_auto_start()
                 return
 
@@ -229,14 +229,14 @@ class MainWindow(QMainWindow):
                 if updated is not None:
                     self.downloads_tab.append_log_line(f"Re-queued (check new): {url}")
                     self._refresh_counts()
-                    self.history_tab.refresh()
+                    self.history_tab.refresh(preserve_page=True)
                     self._try_auto_start()
             elif action == "force":
                 updated = self.db_manager.requeue_existing_url(url, check_new_only=False, force_redownload=True)
                 if updated is not None:
                     self.downloads_tab.append_log_line(f"Re-queued (force): {url}")
                     self._refresh_counts()
-                    self.history_tab.refresh()
+                    self.history_tab.refresh(preserve_page=True)
                     self._try_auto_start()
         except Exception as e:
             self.logger.exception("Failed to add URL")
@@ -344,19 +344,19 @@ class MainWindow(QMainWindow):
     def _on_worker_started(self, worker_id: int, url: str) -> None:
         self.downloads_tab.set_active(worker_id, url)
         self.downloads_tab.append_log_line(f"[{worker_id}] Starting: {url}")
-        self.history_tab.refresh()
+        self.history_tab.refresh(preserve_page=True)
 
     def _on_worker_done(self, worker_id: int, message: str) -> None:
         self.downloads_tab.clear_active(worker_id)
         self.downloads_tab.append_log_line(f"[{worker_id}] {message}")
-        self.history_tab.refresh()
+        self.history_tab.refresh(preserve_page=True)
 
     def _history_check_new(self, url: str) -> None:
         updated = self.db_manager.requeue_existing_url(url, check_new_only=True, force_redownload=False)
         if updated is not None:
             self.downloads_tab.append_log_line(f"Re-queued (check new): {url}")
             self._refresh_counts()
-            self.history_tab.refresh()
+            self.history_tab.refresh(preserve_page=True)
             self._try_auto_start()
 
     def _history_force_redownload(self, url: str) -> None:
@@ -364,7 +364,7 @@ class MainWindow(QMainWindow):
         if updated is not None:
             self.downloads_tab.append_log_line(f"Re-queued (force): {url}")
             self._refresh_counts()
-            self.history_tab.refresh()
+            self.history_tab.refresh(preserve_page=True)
             self._try_auto_start()
 
     def _history_resume(self, url: str) -> None:
@@ -373,7 +373,7 @@ class MainWindow(QMainWindow):
         if updated is not None:
             self.downloads_tab.append_log_line(f"Re-queued (resume): {url}")
             self._refresh_counts()
-            self.history_tab.refresh()
+            self.history_tab.refresh(preserve_page=True)
             self._try_auto_start()
 
     def _history_skip(self, url_id: int) -> None:
@@ -381,11 +381,11 @@ class MainWindow(QMainWindow):
         self.db_manager.mark_skipped(url_id)
         self.downloads_tab.append_log_line(f"Marked as skipped (id={url_id})")
         self._refresh_counts()
-        self.history_tab.refresh()
+        self.history_tab.refresh(preserve_page=True)
 
     def _on_tags_changed(self) -> None:
         """Called when tags are modified. Refresh history to show updated tags."""
-        self.history_tab.refresh()
+        self.history_tab.refresh(preserve_page=True)
 
     def _on_stop_download(self, worker_id: int) -> None:
         """Stop a specific download from the active list."""

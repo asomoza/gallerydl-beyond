@@ -141,13 +141,16 @@ class HistoryTabWidget(QWidget):
         layout.addLayout(pagination)
         layout.addWidget(self.table, 1)
 
-    def refresh(self, *, page: int | None = None, preserve_sort: bool = True) -> None:
+    def refresh(self, *, page: int | None = None, preserve_page: bool = False, preserve_sort: bool = True) -> None:
         text = self.search.text().strip() or None
         tag_id = self._tag_filter.currentData()
         page_size = self._page_size_combo.currentData() or DEFAULT_PAGE_SIZE
 
         if page is None:
-            page = 0  # Reset to first page on search/filter change
+            if preserve_page:
+                page = self.model.current_page
+            else:
+                page = 0  # Reset to first page on search/filter change
 
         # Preserve current sort state unless explicitly changing filters
         sort_column = self.model.sort_column if preserve_sort else None
