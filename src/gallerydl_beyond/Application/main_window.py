@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
             on_tags_changed=self._on_tags_changed,
         )
         self.history_tab.url_removed.connect(self._on_history_url_removed)
+        self.history_tab.urls_requeued.connect(self._on_history_urls_requeued)
 
         self.tabs.addTab(self.downloads_tab, "Downloads")
         self.tabs.addTab(self.history_tab, "History")
@@ -196,8 +197,15 @@ class MainWindow(QMainWindow):
             self.logger.exception("Failed to get DB counts")
 
     def _on_history_url_removed(self, _url_id: int, url: str) -> None:
-        self.downloads_tab.append_log_line(f"Removed from history: {url}")
+        if url:
+            self.downloads_tab.append_log_line(f"Removed from history: {url}")
         self._refresh_counts()
+
+    def _on_history_urls_requeued(self, count: int) -> None:
+        """Handle bulk requeue from history tab."""
+        self.downloads_tab.append_log_line(f"Re-queued {count} URLs from history")
+        self._refresh_counts()
+        self._try_auto_start()
 
     def _on_url_submitted(self, url: str) -> None:
         try:
@@ -321,9 +329,7 @@ class MainWindow(QMainWindow):
         self.history_tab.refresh_tags()  # Refresh tag filter and table
 
     def open_gallerydl_options_dialog(self):
-        dialog = GalleryDLOptionsDialog(
-            self.show_error, self.gallerydl_manager, self.config_manager, self.config_path
-        )
+        dialog = GalleryDLOptionsDialog(self.show_error, self.gallerydl_manager, self.config_manager, self.config_path)
         if dialog.exec():
             self.config_path = dialog.config_path
             self.downloads_tab.append_log_success("Options saved")

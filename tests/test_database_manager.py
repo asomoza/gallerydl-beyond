@@ -1337,3 +1337,236 @@ class TestListUrlsWithTags:
 
         assert len(urls) == 1
         assert urls[0].url == "https://example.com/cats"
+
+
+class TestBulkUpdateStatus:
+    """Test bulk_update_status method."""
+
+    def test_bulk_update_status_multiple_urls(self, db_manager: DatabaseManager):
+        """bulk_update_status should update all specified URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        id3 = db_manager.add_url("https://example.com/3")
+
+        updated = db_manager.bulk_update_status([id1, id2], UrlStatus.SKIPPED)
+
+        assert updated == 2
+        row1 = db_manager.get_by_url("https://example.com/1")
+        row2 = db_manager.get_by_url("https://example.com/2")
+        row3 = db_manager.get_by_url("https://example.com/3")
+        assert row1.status == UrlStatus.SKIPPED
+        assert row2.status == UrlStatus.SKIPPED
+        assert row3.status == UrlStatus.PENDING  # Unchanged
+
+    def test_bulk_update_status_skips_in_progress(self, db_manager: DatabaseManager):
+        """bulk_update_status should not modify IN_PROGRESS URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        # Claim id1 to make it IN_PROGRESS (claim_next_pending gets first by id)
+        db_manager.claim_next_pending()
+
+        updated = db_manager.bulk_update_status([id1, id2], UrlStatus.FAILED)
+
+        # Only id2 should be updated (id1 is IN_PROGRESS)
+        assert updated == 1
+        row1 = db_manager.get_by_url("https://example.com/1")
+        row2 = db_manager.get_by_url("https://example.com/2")
+        assert row1.status == UrlStatus.IN_PROGRESS  # Should remain IN_PROGRESS
+        assert row2.status == UrlStatus.FAILED
+
+    def test_bulk_update_status_empty_list(self, db_manager: DatabaseManager):
+        """bulk_update_status with empty list should return 0."""
+        updated = db_manager.bulk_update_status([], UrlStatus.SKIPPED)
+        assert updated == 0
+
+    def test_bulk_update_status_rejects_in_progress_target(self, db_manager: DatabaseManager):
+        """bulk_update_status should reject setting status to IN_PROGRESS."""
+        id1 = db_manager.add_url("https://example.com/1")
+
+        with pytest.raises(RuntimeError, match="IN_PROGRESS"):
+            db_manager.bulk_update_status([id1], UrlStatus.IN_PROGRESS)
+
+
+class TestBulkDeleteUrls:
+    """Test bulk_delete_urls method."""
+
+    def test_bulk_delete_urls_multiple(self, db_manager: DatabaseManager):
+        """bulk_delete_urls should delete all specified URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        id3 = db_manager.add_url("https://example.com/3")
+
+        deleted, skipped = db_manager.bulk_delete_urls([id1, id2])
+
+        assert deleted == 2
+        assert skipped == 0
+        assert db_manager.get_by_url("https://example.com/1") is None
+        assert db_manager.get_by_url("https://example.com/2") is None
+        assert db_manager.get_by_url("https://example.com/3") is not None
+
+    def test_bulk_delete_urls_skips_in_progress(self, db_manager: DatabaseManager):
+        """bulk_delete_urls should skip IN_PROGRESS URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        # Claim id1 to make it IN_PROGRESS
+        db_manager.claim_next_pending()
+
+        deleted, skipped = db_manager.bulk_delete_urls([id1, id2])
+
+        assert deleted == 1
+        assert skipped == 1
+        assert db_manager.get_by_url("https://example.com/1") is not None  # Still exists
+        assert db_manager.get_by_url("https://example.com/2") is None
+
+    def test_bulk_delete_urls_empty_list(self, db_manager: DatabaseManager):
+        """bulk_delete_urls with empty list should return (0, 0)."""
+        deleted, skipped = db_manager.bulk_delete_urls([])
+        assert deleted == 0
+        assert skipped == 0
+
+
+class TestBulkAddTag:
+    """Test bulk_add_tag method."""
+
+    def test_bulk_add_tag_multiple_urls(self, db_manager: DatabaseManager):
+        """bulk_add_tag should add tag to all specified URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        id3 = db_manager.add_url("https://example.com/3")
+        tag_id = db_manager.create_tag("bulk-tag")
+
+        added = db_manager.bulk_add_tag([id1, id2], tag_id)
+
+        assert added == 2
+        tags1 = db_manager.get_tags_for_url(id1)
+        tags2 = db_manager.get_tags_for_url(id2)
+        tags3 = db_manager.get_tags_for_url(id3)
+        assert any(t.name == "bulk-tag" for t in tags1)
+        assert any(t.name == "bulk-tag" for t in tags2)
+        assert not any(t.name == "bulk-tag" for t in tags3)
+
+    def test_bulk_add_tag_skips_already_tagged(self, db_manager: DatabaseManager):
+        """bulk_add_tag should skip URLs that already have the tag."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        tag_id = db_manager.create_tag("existing-tag")
+        db_manager.assign_tag_to_url(id1, tag_id)
+
+        added = db_manager.bulk_add_tag([id1, id2], tag_id)
+
+        assert added == 1  # Only id2 was newly tagged
+
+    def test_bulk_add_tag_empty_list(self, db_manager: DatabaseManager):
+        """bulk_add_tag with empty list should return 0."""
+        tag_id = db_manager.create_tag("test-tag")
+        added = db_manager.bulk_add_tag([], tag_id)
+        assert added == 0
+
+
+class TestBulkRemoveTag:
+    """Test bulk_remove_tag method."""
+
+    def test_bulk_remove_tag_multiple_urls(self, db_manager: DatabaseManager):
+        """bulk_remove_tag should remove tag from all specified URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        tag_id = db_manager.create_tag("remove-me")
+        db_manager.assign_tag_to_url(id1, tag_id)
+        db_manager.assign_tag_to_url(id2, tag_id)
+
+        removed = db_manager.bulk_remove_tag([id1, id2], tag_id)
+
+        assert removed == 2
+        tags1 = db_manager.get_tags_for_url(id1)
+        tags2 = db_manager.get_tags_for_url(id2)
+        assert not any(t.name == "remove-me" for t in tags1)
+        assert not any(t.name == "remove-me" for t in tags2)
+
+    def test_bulk_remove_tag_ignores_untagged(self, db_manager: DatabaseManager):
+        """bulk_remove_tag should not fail on URLs without the tag."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        tag_id = db_manager.create_tag("partial-tag")
+        db_manager.assign_tag_to_url(id1, tag_id)  # Only id1 has tag
+
+        removed = db_manager.bulk_remove_tag([id1, id2], tag_id)
+
+        assert removed == 1  # Only id1 had the tag
+
+    def test_bulk_remove_tag_empty_list(self, db_manager: DatabaseManager):
+        """bulk_remove_tag with empty list should return 0."""
+        tag_id = db_manager.create_tag("test-tag")
+        removed = db_manager.bulk_remove_tag([], tag_id)
+        assert removed == 0
+
+
+class TestBulkRequeue:
+    """Test bulk_requeue method."""
+
+    def test_bulk_requeue_multiple_urls(self, db_manager: DatabaseManager):
+        """bulk_requeue should requeue all specified URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        db_manager.mark_completed(id1)
+        db_manager.mark_completed(id2)
+
+        requeued = db_manager.bulk_requeue([id1, id2])
+
+        assert requeued == 2
+        row1 = db_manager.get_by_url("https://example.com/1")
+        row2 = db_manager.get_by_url("https://example.com/2")
+        assert row1.status == UrlStatus.PENDING
+        assert row2.status == UrlStatus.PENDING
+
+    def test_bulk_requeue_with_force_redownload(self, db_manager: DatabaseManager):
+        """bulk_requeue should set force_redownload flag."""
+        id1 = db_manager.add_url("https://example.com/1")
+        db_manager.mark_completed(id1)
+
+        db_manager.bulk_requeue([id1], force_redownload=True)
+
+        row = db_manager.get_by_url("https://example.com/1")
+        assert row.status == UrlStatus.PENDING
+        assert row.force_redownload == 1
+
+    def test_bulk_requeue_with_check_new_only(self, db_manager: DatabaseManager):
+        """bulk_requeue should set check_new_only flag."""
+        id1 = db_manager.add_url("https://example.com/1")
+        db_manager.mark_completed(id1)
+
+        db_manager.bulk_requeue([id1], check_new_only=True)
+
+        row = db_manager.get_by_url("https://example.com/1")
+        assert row.status == UrlStatus.PENDING
+        assert row.check_new_only == 1
+
+    def test_bulk_requeue_skips_in_progress(self, db_manager: DatabaseManager):
+        """bulk_requeue should not modify IN_PROGRESS URLs."""
+        id1 = db_manager.add_url("https://example.com/1")
+        id2 = db_manager.add_url("https://example.com/2")
+        # Claim id1 to make it IN_PROGRESS
+        db_manager.claim_next_pending()
+
+        requeued = db_manager.bulk_requeue([id1, id2])
+
+        # Only id2 should be affected (but it was already PENDING)
+        # id1 should remain IN_PROGRESS
+        assert requeued == 1
+        row1 = db_manager.get_by_url("https://example.com/1")
+        assert row1.status == UrlStatus.IN_PROGRESS
+
+    def test_bulk_requeue_clears_last_error(self, db_manager: DatabaseManager):
+        """bulk_requeue should clear last_error."""
+        id1 = db_manager.add_url("https://example.com/1")
+        db_manager.mark_failed(id1, "some error")
+
+        db_manager.bulk_requeue([id1])
+
+        row = db_manager.get_by_url("https://example.com/1")
+        assert row.status == UrlStatus.PENDING
+        assert row.last_error is None
+
+    def test_bulk_requeue_empty_list(self, db_manager: DatabaseManager):
+        """bulk_requeue with empty list should return 0."""
+        requeued = db_manager.bulk_requeue([])
+        assert requeued == 0

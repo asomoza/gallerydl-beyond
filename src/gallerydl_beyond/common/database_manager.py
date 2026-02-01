@@ -326,9 +326,7 @@ class DatabaseManager:
                 params.append(f"%{search.strip()}%")
 
             if tag_id is not None:
-                conditions.append(
-                    "EXISTS (SELECT 1 FROM url_tags ut WHERE ut.url_id = u.id AND ut.tag_id = ?)"
-                )
+                conditions.append("EXISTS (SELECT 1 FROM url_tags ut WHERE ut.url_id = u.id AND ut.tag_id = ?)")
                 params.append(int(tag_id))
 
             if conditions:
@@ -395,9 +393,7 @@ class DatabaseManager:
                 params.append(f"%{search.strip()}%")
 
             if tag_id is not None:
-                conditions.append(
-                    "EXISTS (SELECT 1 FROM url_tags ut WHERE ut.url_id = u.id AND ut.tag_id = ?)"
-                )
+                conditions.append("EXISTS (SELECT 1 FROM url_tags ut WHERE ut.url_id = u.id AND ut.tag_id = ?)")
                 params.append(int(tag_id))
 
             if conditions:
@@ -602,21 +598,13 @@ class DatabaseManager:
                 UrlStatus.COMPLETED_PARTIAL,
                 UrlStatus.SKIPPED,
             ):
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM urls WHERE status = ?;", (status_val,)
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM urls WHERE status = ?;", (status_val,)).fetchone()[0]
                 by_status[status_val] = int(count)
 
-            total_downloads = conn.execute(
-                "SELECT COALESCE(SUM(download_count), 0) FROM urls;"
-            ).fetchone()[0]
+            total_downloads = conn.execute("SELECT COALESCE(SUM(download_count), 0) FROM urls;").fetchone()[0]
 
-            oldest = conn.execute(
-                "SELECT MIN(date_added) FROM urls;"
-            ).fetchone()[0]
-            newest = conn.execute(
-                "SELECT MAX(COALESCE(date_processed, date_added)) FROM urls;"
-            ).fetchone()[0]
+            oldest = conn.execute("SELECT MIN(date_added) FROM urls;").fetchone()[0]
+            newest = conn.execute("SELECT MAX(COALESCE(date_processed, date_added)) FROM urls;").fetchone()[0]
 
             return {
                 "total": int(total),
@@ -801,13 +789,8 @@ class DatabaseManager:
     def list_tags(self) -> list[TagRow]:
         """List all tags ordered by name."""
         with self._locked(), self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, name, date_created FROM tags ORDER BY name ASC;"
-            ).fetchall()
-            return [
-                TagRow(id=int(r[0]), name=str(r[1]), date_created=str(r[2]))
-                for r in rows
-            ]
+            rows = conn.execute("SELECT id, name, date_created FROM tags ORDER BY name ASC;").fetchall()
+            return [TagRow(id=int(r[0]), name=str(r[1]), date_created=str(r[2])) for r in rows]
 
     def get_tag_by_id(self, tag_id: int) -> TagRow | None:
         """Get a tag by its ID."""
@@ -863,10 +846,7 @@ class DatabaseManager:
                 """,
                 (int(url_id),),
             ).fetchall()
-            return [
-                TagRow(id=int(r[0]), name=str(r[1]), date_created=str(r[2]))
-                for r in rows
-            ]
+            return [TagRow(id=int(r[0]), name=str(r[1]), date_created=str(r[2])) for r in rows]
 
     def set_url_tags(self, url_id: int, tag_ids: Iterable[int]) -> None:
         """Set the tags for a URL, replacing any existing tags."""
@@ -885,3 +865,147 @@ class DatabaseManager:
                     )
                 except sqlite3.IntegrityError:
                     pass  # Skip invalid tag_ids
+
+    # ============== Bulk Operations for Multi-Select ==============
+
+    def bulk_update_status(self, url_ids: Iterable[int], status: int) -> int:
+        """Update status for multiple URLs.
+
+        Args:
+            url_ids: IDs of URLs to update.
+            status: New status value (from UrlStatus).
+
+        Returns the number of URLs updated.
+
+        Raises:
+            RuntimeError: if trying to set status to IN_PROGRESS (use claim_next_pending instead).
+        """
+        if status == UrlStatus.IN_PROGRESS:
+            raise RuntimeError("Cannot bulk-set status to IN_PROGRESS; use claim_next_pending")
+
+        url_ids = list(url_ids)
+        if not url_ids:
+            return 0
+
+        with self._locked(), self._connect() as conn:
+            placeholders = ",".join("?" for _ in url_ids)
+            # Don't update URLs that are currently IN_PROGRESS
+            cur = conn.execute(
+                f"UPDATE urls SET status = ?, last_error = NULL WHERE id IN ({placeholders}) AND status != ?;",
+                [status] + url_ids + [UrlStatus.IN_PROGRESS],
+            )
+            return int(cur.rowcount)
+
+    def bulk_delete_urls(self, url_ids: Iterable[int]) -> tuple[int, int]:
+        """Delete multiple URLs from the database.
+
+        Args:
+            url_ids: IDs of URLs to delete.
+
+        Returns (deleted_count, skipped_count) - skipped are IN_PROGRESS URLs.
+        """
+        url_ids = list(url_ids)
+        if not url_ids:
+            return 0, 0
+
+        with self._locked(), self._connect() as conn:
+            placeholders = ",".join("?" for _ in url_ids)
+
+            # Count how many are IN_PROGRESS (will be skipped)
+            in_progress = conn.execute(
+                f"SELECT COUNT(*) FROM urls WHERE id IN ({placeholders}) AND status = ?;",
+                url_ids + [UrlStatus.IN_PROGRESS],
+            ).fetchone()[0]
+
+            # Delete non-IN_PROGRESS URLs
+            cur = conn.execute(
+                f"DELETE FROM urls WHERE id IN ({placeholders}) AND status != ?;",
+                url_ids + [UrlStatus.IN_PROGRESS],
+            )
+
+            return int(cur.rowcount), int(in_progress)
+
+    def bulk_add_tag(self, url_ids: Iterable[int], tag_id: int) -> int:
+        """Add a tag to multiple URLs.
+
+        Args:
+            url_ids: IDs of URLs to tag.
+            tag_id: ID of the tag to add.
+
+        Returns the number of URLs that were tagged (excludes already-tagged).
+        """
+        url_ids = list(url_ids)
+        if not url_ids:
+            return 0
+
+        now = datetime.now(timezone.utc).isoformat()
+        added = 0
+
+        with self._locked(), self._connect() as conn:
+            for url_id in url_ids:
+                try:
+                    conn.execute(
+                        "INSERT INTO url_tags (url_id, tag_id, date_assigned) VALUES (?, ?, ?);",
+                        (int(url_id), int(tag_id), now),
+                    )
+                    added += 1
+                except sqlite3.IntegrityError:
+                    pass  # Already tagged or invalid IDs
+
+        return added
+
+    def bulk_remove_tag(self, url_ids: Iterable[int], tag_id: int) -> int:
+        """Remove a tag from multiple URLs.
+
+        Args:
+            url_ids: IDs of URLs to untag.
+            tag_id: ID of the tag to remove.
+
+        Returns the number of URLs that had the tag removed.
+        """
+        url_ids = list(url_ids)
+        if not url_ids:
+            return 0
+
+        with self._locked(), self._connect() as conn:
+            placeholders = ",".join("?" for _ in url_ids)
+            cur = conn.execute(
+                f"DELETE FROM url_tags WHERE url_id IN ({placeholders}) AND tag_id = ?;",
+                url_ids + [int(tag_id)],
+            )
+            return int(cur.rowcount)
+
+    def bulk_requeue(
+        self, url_ids: Iterable[int], *, force_redownload: bool = False, check_new_only: bool = False
+    ) -> int:
+        """Re-queue multiple URLs for download.
+
+        Args:
+            url_ids: IDs of URLs to re-queue.
+            force_redownload: If True, set force_redownload flag.
+            check_new_only: If True, set check_new_only flag.
+
+        Returns the number of URLs re-queued (excludes IN_PROGRESS).
+        """
+        url_ids = list(url_ids)
+        if not url_ids:
+            return 0
+
+        with self._locked(), self._connect() as conn:
+            placeholders = ",".join("?" for _ in url_ids)
+            cur = conn.execute(
+                f"""UPDATE urls
+                   SET status = ?,
+                       force_redownload = ?,
+                       check_new_only = ?,
+                       last_error = NULL
+                   WHERE id IN ({placeholders}) AND status != ?;""",
+                [
+                    UrlStatus.PENDING,
+                    1 if force_redownload else 0,
+                    1 if check_new_only else 0,
+                ]
+                + url_ids
+                + [UrlStatus.IN_PROGRESS],
+            )
+            return int(cur.rowcount)

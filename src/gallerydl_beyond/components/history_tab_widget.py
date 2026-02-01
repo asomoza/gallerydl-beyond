@@ -20,11 +20,13 @@ from gallerydl_beyond.common.constants import SettingsKeys, UrlStatus
 from gallerydl_beyond.common.database_manager import DatabaseManager
 from gallerydl_beyond.models.history_model import HistoryModel
 
+
 DEFAULT_PAGE_SIZE = 100
 
 
 class HistoryTabWidget(QWidget):
     url_removed = pyqtSignal(int, str)
+    urls_requeued = pyqtSignal(int)  # Emitted when URLs are bulk-requeued (count)
 
     def __init__(
         self,
@@ -94,7 +96,7 @@ class HistoryTabWidget(QWidget):
 
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -250,60 +252,134 @@ class HistoryTabWidget(QWidget):
         row = self.model.get_row(idx.row())
         return row.status if row else None
 
+    def _get_selected_rows(self) -> list:
+        """Get all selected UrlRow objects."""
+        selection = self.table.selectionModel()
+        if not selection:
+            return []
+
+        rows = set()
+        for idx in selection.selectedIndexes():
+            rows.add(idx.row())
+
+        result = []
+        for row_num in sorted(rows):
+            row = self.model.get_row(row_num)
+            if row:
+                result.append(row)
+        return result
+
+    def _get_selected_url_ids(self) -> list[int]:
+        """Get IDs of all selected URLs."""
+        return [r.id for r in self._get_selected_rows()]
+
+    def _get_selected_urls(self) -> list[str]:
+        """Get URLs of all selected rows."""
+        return [r.url for r in self._get_selected_rows()]
+
+    def _get_selected_statuses(self) -> set[int]:
+        """Get unique statuses of all selected rows."""
+        return {r.status for r in self._get_selected_rows()}
+
     def _open_context_menu(self, pos) -> None:
-        # Ensure the row under the cursor is selected.
+        # Ensure the row under the cursor is part of selection
         index = self.table.indexAt(pos)
-        if index.isValid():
+        if not index.isValid():
+            return
+
+        # If clicking on a row not in current selection, select just that row
+        selection = self.table.selectionModel()
+        if not selection.isSelected(index):
             self.table.setCurrentIndex(index)
 
-        url = self._selected_url()
-        url_id = self._selected_row_id()
-        status = self._selected_row_status()
-        if not url:
+        selected_rows = self._get_selected_rows()
+        if not selected_rows:
             return
 
         menu = QMenu(self)
+        count = len(selected_rows)
+        is_multi = count > 1
 
-        copy_url = QAction("Copy URL", self)
-        copy_url.triggered.connect(lambda: self._copy_to_clipboard(url))
-        menu.addAction(copy_url)
+        # Gather data for menu decisions
+        url_ids = [r.id for r in selected_rows]
+        urls = [r.url for r in selected_rows]
+        statuses = {r.status for r in selected_rows}
+
+        # --- Copy URL(s) ---
+        if is_multi:
+            copy_action = QAction(f"Copy {count} URLs", self)
+            copy_action.triggered.connect(lambda: self._copy_to_clipboard("\n".join(urls)))
+        else:
+            copy_action = QAction("Copy URL", self)
+            copy_action.triggered.connect(lambda: self._copy_to_clipboard(urls[0]))
+        menu.addAction(copy_action)
         menu.addSeparator()
 
-        # Show "Resume download" for STOPPED or FAILED items
+        # --- Resume (STOPPED or FAILED) ---
         added_action = False
-        if status in (UrlStatus.STOPPED, UrlStatus.FAILED) and self._on_resume:
-            resume_action = QAction("Resume download", self)
-            resume_action.triggered.connect(lambda: self._on_resume(url))
+        resumable_statuses = {UrlStatus.STOPPED, UrlStatus.FAILED}
+        has_resumable = bool(statuses & resumable_statuses)
+        if has_resumable and self._on_resume:
+            if is_multi:
+                resume_action = QAction(f"Resume {count} downloads", self)
+                resume_action.triggered.connect(lambda: self._bulk_resume(selected_rows))
+            else:
+                resume_action = QAction("Resume download", self)
+                resume_action.triggered.connect(lambda: self._on_resume(urls[0]))
             menu.addAction(resume_action)
             added_action = True
 
-        # Show "Skip" for items that are not IN_PROGRESS and not already SKIPPED
-        if status not in (UrlStatus.IN_PROGRESS, UrlStatus.SKIPPED) and self._on_skip:
-            skip_action = QAction("Skip", self)
-            skip_action.triggered.connect(lambda: self._on_skip(url_id))
+        # --- Skip (not IN_PROGRESS and not SKIPPED) ---
+        non_skippable = {UrlStatus.IN_PROGRESS, UrlStatus.SKIPPED}
+        has_skippable = bool(statuses - non_skippable)
+        if has_skippable and self._on_skip:
+            if is_multi:
+                skip_action = QAction(f"Skip {count} URLs", self)
+                skip_action.triggered.connect(lambda: self._bulk_skip(url_ids))
+            else:
+                skip_action = QAction("Skip", self)
+                skip_action.triggered.connect(lambda: self._on_skip(url_ids[0]))
             menu.addAction(skip_action)
             added_action = True
 
         if added_action:
             menu.addSeparator()
 
-        check_new = QAction("Check for new files", self)
-        check_new.triggered.connect(lambda: self._on_check_new(url))
+        # --- Check for new files ---
+        if is_multi:
+            check_new = QAction(f"Check for new files ({count})", self)
+            check_new.triggered.connect(lambda: self._bulk_check_new(url_ids))
+        else:
+            check_new = QAction("Check for new files", self)
+            check_new.triggered.connect(lambda: self._on_check_new(urls[0]))
         menu.addAction(check_new)
 
-        force = QAction("Force full re-download", self)
-        force.triggered.connect(lambda: self._on_force_redownload(url))
+        # --- Force full re-download ---
+        if is_multi:
+            force = QAction(f"Force full re-download ({count})", self)
+            force.triggered.connect(lambda: self._bulk_force_redownload(url_ids))
+        else:
+            force = QAction("Force full re-download", self)
+            force.triggered.connect(lambda: self._on_force_redownload(urls[0]))
         menu.addAction(force)
 
-        # Tags submenu
+        # --- Tags submenu ---
         tags_menu = QMenu("Tags", self)
-        self._build_tags_submenu(tags_menu, url_id)
+        if is_multi:
+            self._build_bulk_tags_submenu(tags_menu, url_ids)
+        else:
+            self._build_tags_submenu(tags_menu, url_ids[0])
         menu.addMenu(tags_menu)
 
         menu.addSeparator()
 
-        remove_action = QAction("Remove from history…", self)
-        remove_action.triggered.connect(lambda: self._confirm_and_remove(url_id, url))
+        # --- Remove from history ---
+        if is_multi:
+            remove_action = QAction(f"Remove {count} items from history…", self)
+            remove_action.triggered.connect(lambda: self._confirm_and_remove_bulk(url_ids))
+        else:
+            remove_action = QAction("Remove from history…", self)
+            remove_action.triggered.connect(lambda: self._confirm_and_remove(url_ids[0], urls[0]))
         menu.addAction(remove_action)
 
         menu.exec(self.table.viewport().mapToGlobal(pos))
@@ -311,6 +387,132 @@ class HistoryTabWidget(QWidget):
     def _copy_to_clipboard(self, text: str) -> None:
         clipboard = QApplication.clipboard()
         clipboard.setText(text)
+
+    # ============== Bulk Action Methods ==============
+
+    def _bulk_resume(self, rows: list) -> None:
+        """Resume multiple downloads (only STOPPED/FAILED ones)."""
+        resumable = [r.url for r in rows if r.status in (UrlStatus.STOPPED, UrlStatus.FAILED)]
+        for url in resumable:
+            if self._on_resume:
+                self._on_resume(url)
+        self.refresh(page=self.model.current_page)
+
+    def _bulk_skip(self, url_ids: list[int]) -> None:
+        """Skip multiple URLs."""
+        updated = self._db.bulk_update_status(url_ids, UrlStatus.SKIPPED)
+        if updated:
+            self.refresh(page=self.model.current_page)
+            self.urls_requeued.emit(updated)
+
+    def _bulk_check_new(self, url_ids: list[int]) -> None:
+        """Re-queue multiple URLs with check_new_only flag."""
+        updated = self._db.bulk_requeue(url_ids, check_new_only=True)
+        if updated:
+            self.refresh(page=self.model.current_page)
+            self.urls_requeued.emit(updated)
+
+    def _bulk_force_redownload(self, url_ids: list[int]) -> None:
+        """Re-queue multiple URLs with force_redownload flag."""
+        updated = self._db.bulk_requeue(url_ids, force_redownload=True)
+        if updated:
+            self.refresh(page=self.model.current_page)
+            self.urls_requeued.emit(updated)
+
+    def _confirm_and_remove_bulk(self, url_ids: list[int]) -> None:
+        """Confirm and remove multiple URLs from history."""
+        count = len(url_ids)
+        result = QMessageBox.question(
+            self,
+            "Remove from history",
+            f"Are you sure you want to remove {count} URLs from history?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+
+        deleted, skipped = self._db.bulk_delete_urls(url_ids)
+        if deleted > 0:
+            self.refresh(page=self.model.current_page)
+            # Emit signal for each deleted URL (for count updates)
+            for url_id in url_ids:
+                self.url_removed.emit(url_id, "")
+
+        if skipped > 0:
+            QMessageBox.information(
+                self,
+                "Some URLs skipped",
+                f"Removed {deleted} URLs. {skipped} URLs were skipped because they are currently downloading.",
+            )
+
+    def _build_bulk_tags_submenu(self, menu: QMenu, url_ids: list[int]) -> None:
+        """Build the tags submenu for multiple URLs.
+
+        Shows tags with mixed state indicator when URLs have different tag assignments.
+        """
+        if not url_ids:
+            return
+
+        try:
+            all_tags = self._db.list_tags()
+            if not all_tags:
+                no_tags_action = QAction("No tags defined", self)
+                no_tags_action.setEnabled(False)
+                menu.addAction(no_tags_action)
+                return
+
+            # Count how many selected URLs have each tag
+            tag_counts = {}
+            for url_id in url_ids:
+                url_tags = self._db.get_tags_for_url(url_id)
+                for t in url_tags:
+                    tag_counts[t.id] = tag_counts.get(t.id, 0) + 1
+
+            count = len(url_ids)
+            for tag in all_tags:
+                tag_count = tag_counts.get(tag.id, 0)
+                action = QAction(tag.name, self)
+                action.setCheckable(True)
+
+                if tag_count == count:
+                    # All selected have this tag
+                    action.setChecked(True)
+                    action.triggered.connect(
+                        lambda checked, tid=tag.id, uids=url_ids: self._bulk_toggle_tag(uids, tid, checked)
+                    )
+                elif tag_count > 0:
+                    # Some have, some don't - show partial indicator
+                    action.setChecked(True)
+                    action.setText(f"{tag.name} ({tag_count}/{count})")
+                    action.triggered.connect(
+                        lambda checked, tid=tag.id, uids=url_ids: self._bulk_toggle_tag(uids, tid, checked)
+                    )
+                else:
+                    # None have this tag
+                    action.setChecked(False)
+                    action.triggered.connect(
+                        lambda checked, tid=tag.id, uids=url_ids: self._bulk_toggle_tag(uids, tid, checked)
+                    )
+
+                menu.addAction(action)
+        except Exception:
+            error_action = QAction("Error loading tags", self)
+            error_action.setEnabled(False)
+            menu.addAction(error_action)
+
+    def _bulk_toggle_tag(self, url_ids: list[int], tag_id: int, assign: bool) -> None:
+        """Toggle a tag assignment for multiple URLs."""
+        try:
+            if assign:
+                self._db.bulk_add_tag(url_ids, tag_id)
+            else:
+                self._db.bulk_remove_tag(url_ids, tag_id)
+            self.refresh(page=self.model.current_page)
+            if self._on_tags_changed:
+                self._on_tags_changed()
+        except Exception as e:
+            QMessageBox.warning(self, "Tag Error", f"Failed to update tags: {e}")
 
     def _confirm_and_remove(self, url_id: int | None, url: str) -> None:
         if url_id is None:
@@ -357,9 +559,7 @@ class HistoryTabWidget(QWidget):
                 action.setCheckable(True)
                 action.setChecked(tag.id in url_tag_ids)
                 # Use default argument to capture current values
-                action.triggered.connect(
-                    lambda checked, tid=tag.id, uid=url_id: self._toggle_tag(uid, tid, checked)
-                )
+                action.triggered.connect(lambda checked, tid=tag.id, uid=url_id: self._toggle_tag(uid, tid, checked))
                 menu.addAction(action)
         except Exception:
             error_action = QAction("Error loading tags", self)
