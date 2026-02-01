@@ -1,5 +1,6 @@
 import logging
 import logging.config
+import multiprocessing
 import os
 import sys
 
@@ -27,6 +28,7 @@ def _configure_logging() -> None:
 
 
 def main():
+    multiprocessing.freeze_support()
     _configure_logging()
     app = GalleryDLBeyondApplication(sys.argv)
     sys.exit(app.exec())

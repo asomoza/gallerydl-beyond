@@ -4,8 +4,9 @@ This script lives in `src/` so the `gallerydl_beyond` package is importable with
 needing to manipulate `sys.path`.
 """
 
-from gallerydl_beyond.__main__ import main
-
+import multiprocessing
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    from gallerydl_beyond.__main__ import main
     main()

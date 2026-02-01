@@ -19,6 +19,11 @@ from gallerydl_beyond.gallerydl_utils.gallerydl_utils import get_installed_versi
 logger = logging.getLogger(__name__)
 
 
+def is_frozen() -> bool:
+    """Check if running as a PyInstaller frozen executable."""
+    return getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
+
+
 LogLevel = Literal["info", "success", "warning", "error"]
 
 
@@ -158,6 +163,9 @@ class StartupWorker(QThread):
         return None
 
     def _detect_python_module(self) -> bool:
+        # When frozen (PyInstaller), sys.executable is the bundled app, not Python
+        if is_frozen():
+            return False
         cmd = [sys.executable, "-m", "gallery_dl", "--version"]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0)
@@ -177,6 +185,9 @@ class StartupWorker(QThread):
             return False
 
     def _try_update_in_current_env(self) -> tuple[bool, str]:
+        if is_frozen():
+            return False, "Cannot update gallery-dl from frozen executable"
+
         for update_cmd in (
             ["uv", "pip", "install", "--upgrade", "gallery-dl"],
             [sys.executable, "-m", "pip", "install", "--upgrade", "gallery-dl"],

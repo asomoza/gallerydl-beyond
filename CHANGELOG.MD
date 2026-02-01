@@ -31,6 +31,7 @@
 - History tab sorting: click column headers to sort by URL, Status, Downloads, Added, or Processed date (ascending/descending)
 - page size preference persists across app restarts
 - database performance: added indexes on date_processed, date_added, and url columns
+- fix: PyInstaller builds no longer spawn infinite app instances (added frozen executable detection)
 
 ## 0.0.1 - 2023-06-29
 
