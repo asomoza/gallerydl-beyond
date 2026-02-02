@@ -6,7 +6,7 @@ description = "Graphical User Interface (GUI) for gallery-dl"
 readme = "README.MD"
 requires-python = ">=3.12"
 dependencies = [
-    "gallery-dl<1.29.4",
+    "gallery-dl>=1.29.4",
     "packaging>=25.0",
     "pyqt6",
 ]
