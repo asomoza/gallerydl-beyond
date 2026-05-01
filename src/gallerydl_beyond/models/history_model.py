@@ -23,11 +23,11 @@ class HistoryModel(QAbstractTableModel):
 
     # Map column index to database sort column name
     SORTABLE_COLUMNS = {
-        0: "id",            # # (row number based on id order)
-        1: "url",           # URL
-        2: "status",        # Status
+        0: "id",  # # (row number based on id order)
+        1: "url",  # URL
+        2: "status",  # Status
         3: "download_count",  # Downloads
-        4: "date_added",    # Added
+        4: "date_added",  # Added
         5: "date_processed",  # Processed
         # 6: Last error - not sortable
         # 7: Tags - not sortable

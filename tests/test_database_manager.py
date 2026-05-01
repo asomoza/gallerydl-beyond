@@ -574,7 +574,7 @@ class TestResetInProgress:
     def test_reset_in_progress_to_stopped(self, db_manager: DatabaseManager):
         """reset_in_progress_to_stopped() should reset IN_PROGRESS to STOPPED."""
         db_manager.add_url("https://example.com/gallery")
-        claimed = db_manager.claim_next_pending()
+        db_manager.claim_next_pending()
 
         count = db_manager.reset_in_progress_to_stopped()
 
@@ -1167,7 +1167,7 @@ class TestCountUrls:
     def test_count_urls_combined_filters(self, db_manager: DatabaseManager):
         """count_urls() should combine search and tag filters."""
         url1 = db_manager.add_url("https://example.com/cats")
-        url2 = db_manager.add_url("https://example.com/dogs")
+        db_manager.add_url("https://example.com/dogs")
         url3 = db_manager.add_url("https://other.com/cats")
         tag_id = db_manager.create_tag("animals")
         db_manager.assign_tag_to_url(url1, tag_id)
@@ -1326,7 +1326,7 @@ class TestListUrlsWithTags:
     def test_list_urls_filter_combined(self, db_manager: DatabaseManager):
         """list_urls() should combine search and tag filters."""
         url1 = db_manager.add_url("https://example.com/cats")
-        url2 = db_manager.add_url("https://example.com/dogs")
+        db_manager.add_url("https://example.com/dogs")
         url3 = db_manager.add_url("https://other.com/cats")
         tag_id = db_manager.create_tag("animals")
         db_manager.assign_tag_to_url(url1, tag_id)
@@ -1346,7 +1346,7 @@ class TestBulkUpdateStatus:
         """bulk_update_status should update all specified URLs."""
         id1 = db_manager.add_url("https://example.com/1")
         id2 = db_manager.add_url("https://example.com/2")
-        id3 = db_manager.add_url("https://example.com/3")
+        db_manager.add_url("https://example.com/3")
 
         updated = db_manager.bulk_update_status([id1, id2], UrlStatus.SKIPPED)
 
@@ -1394,7 +1394,7 @@ class TestBulkDeleteUrls:
         """bulk_delete_urls should delete all specified URLs."""
         id1 = db_manager.add_url("https://example.com/1")
         id2 = db_manager.add_url("https://example.com/2")
-        id3 = db_manager.add_url("https://example.com/3")
+        db_manager.add_url("https://example.com/3")
 
         deleted, skipped = db_manager.bulk_delete_urls([id1, id2])
 

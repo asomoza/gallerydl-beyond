@@ -42,11 +42,11 @@ class MainWindow(QMainWindow):
         self.gallerydl_cmd = None
         self._startup_worker: StartupWorker | None = None
 
-        geometry = self.settings.value("geometry")
+        geometry = self.settings.value(SettingsKeys.WINDOW_GEOMETRY)
         if geometry is not None:
             self.restoreGeometry(geometry)
 
-        window_state = self.settings.value("windowState")
+        window_state = self.settings.value(SettingsKeys.WINDOW_STATE)
         if window_state is not None:
             self.restoreState(window_state)
 
@@ -249,8 +249,8 @@ class MainWindow(QMainWindow):
             self.download_manager.try_fill_workers()
 
     def closeEvent(self, event):
-        self.settings.setValue("geometry", self.saveGeometry())
-        self.settings.setValue("windowState", self.saveState())
+        self.settings.setValue(SettingsKeys.WINDOW_GEOMETRY, self.saveGeometry())
+        self.settings.setValue(SettingsKeys.WINDOW_STATE, self.saveState())
 
         # Stop all running downloads gracefully
         if self.download_manager and self.download_manager.is_running:

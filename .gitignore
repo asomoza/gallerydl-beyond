@@ -2,6 +2,7 @@
 .vscode/
 app.spec
 database.db
+gallery-dl.db
 dist/
 bin/
 build/
@@ -11,3 +12,5 @@ config.json
 
 # Packaging/build artifacts
 *.egg-info/
+
+uv.lock

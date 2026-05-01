@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -54,7 +53,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "allgirlbooru": "https://allgirl.booru.org/index.php?page=post&s=view&id={id}",
     "aibooru": "https://aibooru.online/posts/{id}",
     "furry34": "https://furry34.com/post/show/{id}",
-
     # === Art platforms ===
     "pixiv": "https://www.pixiv.net/en/artworks/{id}",
     "deviantart": "https://www.deviantart.com/deviation/{id}",
@@ -69,7 +67,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "pillowfort": "https://www.pillowfort.social/posts/{id}",
     "itaku": "https://itaku.ee/images/{id}",
     "vk": "https://vk.com/photo{id}",
-
     # === Social media ===
     "twitter": "https://twitter.com/i/status/{id}",
     "x": "https://x.com/i/status/{id}",
@@ -82,8 +79,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "facebook": None,  # Complex auth
     "flickr": "https://www.flickr.com/photo.gne?id={id}",
     "weibo": "https://weibo.com/detail/{id}",
-    "bilibili": "https://www.bilibili.com/video/{id}",
-
     # === Image hosts ===
     "imgur": "https://imgur.com/{id}",
     "imgbb": "https://ibb.co/{id}",
@@ -92,7 +87,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "cyberdrop": "https://cyberdrop.me/a/{id}",
     "gofile": "https://gofile.io/d/{id}",
     "pixhost": "https://pixhost.to/show/{id}",
-
     # === Hentai/Doujin sites ===
     "nhentai": "https://nhentai.net/g/{id}/",
     "hitomi": "https://hitomi.la/galleries/{id}.html",
@@ -102,7 +96,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "8muses": "https://comics.8muses.com/comics/album/{id}",
     "hentaihand": "https://hentaihand.com/en/comic/{id}",
     "simplyhentai": "https://www.simply-hentai.com/g/{id}",
-
     # === Subscription/Patreon-like ===
     "fanbox": "https://www.fanbox.cc/@_/posts/{id}",
     "fantia": "https://fantia.jp/posts/{id}",
@@ -113,7 +106,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "kemono": "https://kemono.su/_/post/{id}",
     "coomer": "https://coomer.su/_/post/{id}",
     "cien": "https://ci-en.net/creator/_/article/{id}",
-
     # === Manga/Comics ===
     "mangadex": "https://mangadex.org/chapter/{id}",
     "batoto": "https://bato.to/chapter/{id}",
@@ -124,7 +116,6 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "hentaihere": "https://hentaihere.com/m/{id}",
     "readcomiconline": None,  # Complex URL
     "comicvine": "https://comicvine.gamespot.com/a/{id}",
-
     # === Other ===
     "behance": "https://www.behance.net/gallery/{id}",
     "500px": "https://500px.com/photo/{id}",
@@ -138,21 +129,20 @@ EXTRACTOR_URL_PATTERNS: dict[str, str | None] = {
     "pornhub": "https://www.pornhub.com/photo/{id}",
     "scrolller": "https://scrolller.com/r/{id}",
     "redgifs": "https://www.redgifs.com/watch/{id}",
-
     # === Sites that CAN'T be reconstructed (need tokens, complex URLs, etc.) ===
     "exhentai": None,  # Needs token: https://exhentai.org/g/{id}/{token}/
     "e-hentai": None,  # Needs token
-    "discord": None,   # Needs channel ID + auth
-    "naver": None,     # Complex auth
-    "afdian": None,    # Chinese, complex
+    "discord": None,  # Needs channel ID + auth
+    "naver": None,  # Complex auth
+    "afdian": None,  # Chinese, complex
     "bilibili": None,  # Different URL types
-    "lofter": None,    # Needs blog name
-    "poipiku": None,   # Complex URL
-    "skeb": None,      # Needs username
-    "blogger": None,   # Needs blog name
-    "smugmug": None,   # Needs album path
+    "lofter": None,  # Needs blog name
+    "poipiku": None,  # Complex URL
+    "skeb": None,  # Needs username
+    "blogger": None,  # Needs blog name
+    "smugmug": None,  # Needs album path
     "photobucket": None,  # Complex URL
-    "vsco": None,      # Needs username
+    "vsco": None,  # Needs username
 }
 
 
@@ -188,17 +178,17 @@ def _parse_archive_entry(entry: str) -> tuple[str, str, str | None] | None:
     Returns None if parsing fails.
     """
     # Try pattern: {extractor}{gallery_id}_{page}
-    match = re.match(r'^([a-zA-Z_-]+?)(\d+)(?:_(.+))?$', entry)
+    match = re.match(r"^([a-zA-Z_-]+?)(\d+)(?:_(.+))?$", entry)
     if match:
         return match.group(1), match.group(2), match.group(3)
 
     # Try pattern: {extractor}_{id} (no page suffix)
-    match = re.match(r'^([a-zA-Z_-]+)_(\d+)$', entry)
+    match = re.match(r"^([a-zA-Z_-]+)_(\d+)$", entry)
     if match:
         return match.group(1), match.group(2), None
 
     # Try pattern with alphanumeric id: {extractor}_{alphanum_id}_{page}
-    match = re.match(r'^([a-zA-Z]+)_([a-zA-Z0-9_-]+?)(?:_(\d+))?$', entry)
+    match = re.match(r"^([a-zA-Z]+)_([a-zA-Z0-9_-]+?)(?:_(\d+))?$", entry)
     if match:
         return match.group(1), match.group(2), match.group(3)
 
@@ -991,13 +981,15 @@ class DatabaseDialog(BaseDialog):
                 status = "can reconstruct"
                 color = "#4caf50"  # green
             elif root:
-                status = f"known site - no URL pattern"
+                status = "known site - no URL pattern"
                 color = "#ff9800"  # orange
             else:
                 status = "unknown extractor"
                 color = "#f44336"  # red
 
-            line_label = QLabel(f"• <b>{extractor}</b>: {len(ids)} galleries (<span style='color:{color}'>{status}</span>)")
+            line_label = QLabel(
+                f"• <b>{extractor}</b>: {len(ids)} galleries (<span style='color:{color}'>{status}</span>)"
+            )
             line_label.setTextFormat(Qt.TextFormat.RichText)
             scroll_layout.addWidget(line_label)
 
@@ -1090,9 +1082,7 @@ class DatabaseDialog(BaseDialog):
 
         try:
             if not self._db.rename_tag(tag_id, new_name.strip()):
-                QMessageBox.warning(
-                    self, "Rename Failed", f"A tag named '{new_name.strip()}' already exists."
-                )
+                QMessageBox.warning(self, "Rename Failed", f"A tag named '{new_name.strip()}' already exists.")
                 return
             self._refresh_tag_list()
         except ValueError as e:

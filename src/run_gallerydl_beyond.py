@@ -9,4 +9,5 @@ import multiprocessing
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     from gallerydl_beyond.__main__ import main
+
     main()

@@ -35,8 +35,6 @@ class StartupResult:
     gallerydl_mode: str | None
     installed_version: str | None
     latest_version: str | None
-    updated: bool
-    update_message: str | None
 
 
 class StartupWorker(QThread):
@@ -67,8 +65,6 @@ class StartupWorker(QThread):
         gallerydl_mode: str | None = None
         installed: str | None = None
         latest: str | None = None
-        updated = False
-        update_message: str | None = None
 
         try:
             self.log.emit("info", "Initializing config...")
@@ -95,19 +91,22 @@ class StartupWorker(QThread):
                 if installed and latest:
                     try:
                         if version.parse(latest) > version.parse(installed):
+                            # Report only — auto-updating at startup was misleading: a
+                            # `uv pip install --upgrade` succeeds in the moment but is
+                            # silently reverted on the next `uv run` (the lockfile wins),
+                            # so the user saw "updated" every launch with no real change.
+                            # The Options dialog has an Update button for an explicit
+                            # one-shot upgrade; permanent fixes need a lockfile change.
                             self.log.emit(
-                                "warning", f"gallery-dl out of date (installed {installed}, latest {latest})"
+                                "warning",
+                                f"gallery-dl out of date (installed {installed}, latest {latest})",
                             )
-                            # Check if we can auto-update: python mode, or system path inside current venv
-                            can_update = gallerydl_mode == "python" or self._is_in_current_venv(gallerydl_display)
-                            if can_update:
-                                self.log.emit("info", "Attempting to update gallery-dl in current env...")
-                                updated, update_message = self._try_update_in_current_env()
-                                if updated:
-                                    self.log.emit("success", update_message or "Updated")
-                                    installed = get_installed_version(gallerydl_cmd)
-                                else:
-                                    self.log.emit("warning", update_message or "Update failed")
+                            self.log.emit(
+                                "info",
+                                "To update: open Gallery-dl Options → Update, "
+                                "or run `uv sync --upgrade-package gallery-dl` "
+                                "(uv-managed projects) / `pip install -U gallery-dl`.",
+                            )
                         else:
                             self.log.emit("success", "gallery-dl is up to date")
                     except Exception as exc:
@@ -127,8 +126,6 @@ class StartupWorker(QThread):
                     gallerydl_mode=gallerydl_mode,
                     installed_version=installed,
                     latest_version=latest,
-                    updated=updated,
-                    update_message=update_message,
                 )
             )
 
@@ -172,35 +169,3 @@ class StartupWorker(QThread):
             return result.returncode == 0
         except Exception:
             return False
-
-    def _is_in_current_venv(self, path: str | None) -> bool:
-        """Check if the given path is inside the current Python environment (venv)."""
-        if not path:
-            return False
-        try:
-            resolved = Path(path).resolve()
-            venv_prefix = Path(sys.prefix).resolve()
-            return str(resolved).startswith(str(venv_prefix))
-        except Exception:
-            return False
-
-    def _try_update_in_current_env(self) -> tuple[bool, str]:
-        if is_frozen():
-            return False, "Cannot update gallery-dl from frozen executable"
-
-        for update_cmd in (
-            ["uv", "pip", "install", "--upgrade", "gallery-dl"],
-            [sys.executable, "-m", "pip", "install", "--upgrade", "gallery-dl"],
-        ):
-            try:
-                process = subprocess.run(update_cmd, capture_output=True, text=True)
-                if process.returncode == 0:
-                    return True, (process.stdout.strip() or "gallery-dl updated")
-                stderr = process.stderr.strip()
-                stdout = process.stdout.strip()
-                return False, stderr or stdout or f"Update failed (exit {process.returncode})"
-            except FileNotFoundError:
-                continue
-            except Exception as exc:
-                return False, str(exc)
-        return False, "Neither uv nor pip was available to update gallery-dl"

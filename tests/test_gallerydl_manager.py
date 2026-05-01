@@ -400,7 +400,10 @@ class TestTryUpdateInCurrentEnv:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "Successfully installed gallery-dl"
+        # When running inside a uv-managed project, the chosen command is
+        # `uv sync --upgrade-package` and uv writes its output to stderr.
+        mock_result.stderr = "Resolved 50 packages\nInstalled gallery-dl"
+        mock_result.stdout = ""
 
         with patch("subprocess.run", return_value=mock_result):
             ok, message = manager.try_update_in_current_env()
@@ -432,3 +435,480 @@ class TestTryUpdateInCurrentEnv:
 
         assert ok is False
         assert "uv" in message.lower() or "pip" in message.lower()
+
+
+class TestGetMode_ExternalPython:
+    """The new external_python mode round-trips through QSettings."""
+
+    def test_get_mode_external_python(self, mock_qsettings):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "external_python"
+        manager = GalleryDLManager(mock_qsettings)
+
+        assert manager.get_mode() == "external_python"
+
+    def test_set_mode_external_python(self, mock_qsettings):
+        manager = GalleryDLManager(mock_qsettings)
+
+        manager.set_mode("external_python")
+
+        assert mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] == "external_python"
+
+
+class TestExternalInterp:
+    """get/set for the external interpreter path."""
+
+    def test_get_external_interp_none_by_default(self, mock_qsettings):
+        manager = GalleryDLManager(mock_qsettings)
+        assert manager.get_external_interp() is None
+
+    def test_get_external_interp_returns_stored(self, mock_qsettings):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = "/opt/venv/bin/python"
+        manager = GalleryDLManager(mock_qsettings)
+        assert manager.get_external_interp() == "/opt/venv/bin/python"
+
+    def test_get_external_interp_strips_whitespace(self, mock_qsettings):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = "  /a/b/python  "
+        manager = GalleryDLManager(mock_qsettings)
+        assert manager.get_external_interp() == "/a/b/python"
+
+    def test_set_external_interp_stores(self, mock_qsettings):
+        manager = GalleryDLManager(mock_qsettings)
+        manager.set_external_interp("/x/python")
+        assert mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] == "/x/python"
+
+    def test_set_external_interp_empty_removes(self, mock_qsettings):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = "/x/python"
+        manager = GalleryDLManager(mock_qsettings)
+        manager.set_external_interp("")
+        assert SettingsKeys.GALLERYDL_EXTERNAL_INTERP not in mock_qsettings._store
+
+    def test_set_external_interp_none_removes(self, mock_qsettings):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = "/x/python"
+        manager = GalleryDLManager(mock_qsettings)
+        manager.set_external_interp(None)
+        assert SettingsKeys.GALLERYDL_EXTERNAL_INTERP not in mock_qsettings._store
+
+
+class TestProbeInterpreter:
+    """probe_interpreter shells out and parses --version output."""
+
+    def test_probe_returns_version_on_success(self, tmp_path: Path):
+        # The interpreter file just needs to exist & be executable; subprocess is mocked.
+        fake_interp = tmp_path / "python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "1.28.0\n"
+
+        with patch("subprocess.run", return_value=mock_result):
+            version = GalleryDLManager.probe_interpreter(fake_interp)
+
+        assert version == "1.28.0"
+
+    def test_probe_returns_none_when_file_missing(self, tmp_path: Path):
+        version = GalleryDLManager.probe_interpreter(tmp_path / "does_not_exist")
+        assert version is None
+
+    def test_probe_returns_none_on_nonzero_exit(self, tmp_path: Path):
+        fake_interp = tmp_path / "python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            version = GalleryDLManager.probe_interpreter(fake_interp)
+
+        assert version is None
+
+    def test_probe_returns_none_on_timeout(self, tmp_path: Path):
+        import subprocess as sp
+
+        fake_interp = tmp_path / "python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired(cmd="x", timeout=1)):
+            version = GalleryDLManager.probe_interpreter(fake_interp, timeout_s=0.1)
+
+        assert version is None
+
+    def test_probe_returns_unknown_when_stdout_empty(self, tmp_path: Path):
+        # Successful exit but no version printed — still treat as "found", with a sentinel.
+        fake_interp = tmp_path / "python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+
+        with patch("subprocess.run", return_value=mock_result):
+            version = GalleryDLManager.probe_interpreter(fake_interp)
+
+        assert version == "unknown"
+
+
+class TestDiscoverEnvironments:
+    """discover_environments scans well-known locations and probes each."""
+
+    def test_discover_returns_envs_with_versions(self, mock_qsettings, tmp_path: Path):
+        # Stub the candidate iterator to point at a controlled tmp interpreter.
+        fake_interp = tmp_path / "venv-python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        manager = GalleryDLManager(mock_qsettings)
+
+        with (
+            patch(
+                "gallerydl_beyond.gallerydl_utils.gallerydl_manager._iter_candidate_interpreters",
+                return_value=iter([(fake_interp, "test-source")]),
+            ),
+            patch.object(GalleryDLManager, "probe_interpreter", staticmethod(lambda interp, timeout_s=3.0: "1.30.0")),
+        ):
+            envs = manager.discover_environments()
+
+        assert len(envs) == 1
+        assert envs[0].source == "test-source"
+        assert envs[0].version == "1.30.0"
+
+    def test_discover_skips_non_matching(self, mock_qsettings, tmp_path: Path):
+        fake_interp = tmp_path / "broken-python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        manager = GalleryDLManager(mock_qsettings)
+
+        with (
+            patch(
+                "gallerydl_beyond.gallerydl_utils.gallerydl_manager._iter_candidate_interpreters",
+                return_value=iter([(fake_interp, "test-source")]),
+            ),
+            patch.object(GalleryDLManager, "probe_interpreter", staticmethod(lambda interp, timeout_s=3.0: None)),
+        ):
+            envs = manager.discover_environments()
+
+        assert envs == []
+
+    def test_discover_dedupes_by_resolved_path(self, mock_qsettings, tmp_path: Path):
+        # Two sources pointing at the same interpreter should appear once.
+        fake_interp = tmp_path / "venv-python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        manager = GalleryDLManager(mock_qsettings)
+
+        with (
+            patch(
+                "gallerydl_beyond.gallerydl_utils.gallerydl_manager._iter_candidate_interpreters",
+                return_value=iter([(fake_interp, "first"), (fake_interp, "second")]),
+            ),
+            patch.object(GalleryDLManager, "probe_interpreter", staticmethod(lambda interp, timeout_s=3.0: "1.30.0")),
+        ):
+            envs = manager.discover_environments()
+
+        assert len(envs) == 1
+        assert envs[0].source == "first"
+
+
+class TestResolveExternalPython:
+    """resolve() in external_python mode."""
+
+    def test_resolve_external_python_no_interp(self, mock_qsettings):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "external_python"
+        manager = GalleryDLManager(mock_qsettings)
+
+        assert manager.resolve() is None
+
+    def test_resolve_external_python_invalid_interp(self, mock_qsettings, tmp_path: Path):
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "external_python"
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = str(tmp_path / "missing")
+        manager = GalleryDLManager(mock_qsettings)
+
+        assert manager.resolve() is None
+
+    def test_resolve_external_python_valid(self, mock_qsettings, tmp_path: Path):
+        fake_interp = tmp_path / "python"
+        fake_interp.touch()
+        fake_interp.chmod(0o755)
+
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "external_python"
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = str(fake_interp)
+        manager = GalleryDLManager(mock_qsettings)
+
+        with patch.object(GalleryDLManager, "probe_interpreter", staticmethod(lambda interp, timeout_s=5.0: "1.30.0")):
+            result = manager.resolve()
+
+        assert result is not None
+        assert result.mode == "external_python"
+        assert result.command == [str(fake_interp), "-m", "gallery_dl"]
+        assert str(fake_interp) in result.display
+
+
+class TestFindUvProjectRoot:
+    """`_find_uv_project_root` walks up from sys.prefix looking for uv.lock + pyproject.toml."""
+
+    def test_finds_project_when_both_files_present(self, tmp_path: Path):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "myproj"
+        venv = project / ".venv"
+        venv.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("[project]\nname='x'\n")
+        (project / "uv.lock").write_text("# lock")
+
+        with patch("sys.prefix", str(venv)):
+            root = gm._find_uv_project_root()
+
+        assert root == project.resolve()
+
+    def test_returns_none_without_uv_lock(self, tmp_path: Path):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "myproj"
+        venv = project / ".venv"
+        venv.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("[project]\nname='x'\n")
+        # Intentionally no uv.lock — pip-installed project, not uv-managed.
+
+        with patch("sys.prefix", str(venv)):
+            root = gm._find_uv_project_root()
+
+        assert root is None
+
+    def test_returns_none_when_frozen(self, tmp_path: Path):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "myproj"
+        venv = project / ".venv"
+        venv.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("")
+        (project / "uv.lock").write_text("")
+
+        with (
+            patch("sys.prefix", str(venv)),
+            patch.object(gm, "is_frozen", return_value=True),
+        ):
+            root = gm._find_uv_project_root()
+
+        assert root is None
+
+
+class TestTryUpdateUvSyncBranch:
+    """When inside a uv-managed project, prefer `uv sync --upgrade-package`."""
+
+    def test_uv_sync_chosen_and_succeeds(self, mock_qsettings, tmp_path: Path):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        manager = GalleryDLManager(mock_qsettings)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = "Resolved 50 packages\nInstalled 1 package"
+        mock_result.stdout = ""
+
+        with (
+            patch.object(gm, "_find_uv_project_root", return_value=project),
+            patch("subprocess.run", return_value=mock_result) as run_mock,
+        ):
+            ok, message = manager.try_update_in_current_env()
+
+        assert ok is True
+        assert "Installed 1 package" in message
+        # uv sync invoked with the project as cwd (not via --directory).
+        args, kwargs = run_mock.call_args
+        assert args[0][:2] == ["uv", "sync"]
+        assert "--upgrade-package" in args[0]
+        assert "gallery-dl" in args[0]
+        assert kwargs.get("cwd") == str(project)
+
+    def test_uv_sync_failure_does_not_fall_through_to_pip(self, mock_qsettings, tmp_path: Path):
+        # If `uv sync` runs and fails (e.g. network error), surface the failure
+        # instead of trying `uv pip install` — that would silently update the
+        # venv only, hiding the lockfile-relevant error from the user.
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        manager = GalleryDLManager(mock_qsettings)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "Network is unreachable"
+        mock_result.stdout = ""
+
+        with (
+            patch.object(gm, "_find_uv_project_root", return_value=project),
+            patch("subprocess.run", return_value=mock_result) as run_mock,
+        ):
+            ok, message = manager.try_update_in_current_env()
+
+        assert ok is False
+        assert "Network is unreachable" in message
+        # Only one subprocess call — we did not fall back to pip.
+        assert run_mock.call_count == 1
+
+    def test_uv_missing_falls_back_to_pip_path(self, mock_qsettings, tmp_path: Path):
+        # If uv itself is not on PATH, the `uv sync` attempt raises
+        # FileNotFoundError; the fallback chain (uv pip → python -m pip)
+        # then runs as before.
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        manager = GalleryDLManager(mock_qsettings)
+
+        ok_result = MagicMock()
+        ok_result.returncode = 0
+        ok_result.stdout = "Successfully installed gallery-dl-1.32.0"
+
+        # First call (uv sync) raises FileNotFoundError; second call (uv pip
+        # install) also raises; third (python -m pip) succeeds.
+        side_effects = [FileNotFoundError(), FileNotFoundError(), ok_result]
+
+        with (
+            patch.object(gm, "_find_uv_project_root", return_value=project),
+            patch("subprocess.run", side_effect=side_effects) as run_mock,
+        ):
+            ok, message = manager.try_update_in_current_env()
+
+        assert ok is True
+        assert "gallery-dl" in message
+        assert run_mock.call_count == 3
+
+
+class TestTryUpdatePipFallbackBranch:
+    """Outside a uv-managed project, `try_update_in_current_env` uses uv pip / pip."""
+
+    def test_no_project_uses_uv_pip(self, mock_qsettings):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        manager = GalleryDLManager(mock_qsettings)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Successfully installed gallery-dl-1.32.0"
+
+        with (
+            patch.object(gm, "_find_uv_project_root", return_value=None),
+            patch("subprocess.run", return_value=mock_result) as run_mock,
+        ):
+            ok, message = manager.try_update_in_current_env()
+
+        assert ok is True
+        assert "gallery-dl" in message
+        # First call should be `uv pip install --upgrade gallery-dl`.
+        args, _ = run_mock.call_args_list[0]
+        assert args[0][:3] == ["uv", "pip", "install"]
+
+
+class TestTryUpdateDispatch:
+    """`try_update()` dispatches by mode to the right interpreter."""
+
+    def test_external_python_targets_external_interp(self, mock_qsettings, tmp_path: Path):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        external = tmp_path / "external" / "bin" / "python"
+        external.parent.mkdir(parents=True)
+        external.touch()
+        external.chmod(0o755)
+
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "external_python"
+        mock_qsettings._store[SettingsKeys.GALLERYDL_EXTERNAL_INTERP] = str(external)
+        manager = GalleryDLManager(mock_qsettings)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Successfully installed gallery-dl-1.32.0"
+        mock_result.stderr = ""
+
+        with (
+            # No uv project around the external interp — force the pip path.
+            patch.object(gm, "_find_uv_project_root", return_value=None),
+            patch("subprocess.run", return_value=mock_result) as run_mock,
+        ):
+            ok, message = manager.try_update()
+
+        assert ok is True
+        assert "gallery-dl" in message
+        # Command should target the external interpreter via `--python`.
+        args, _ = run_mock.call_args_list[0]
+        assert args[0][:3] == ["uv", "pip", "install"]
+        assert "--python" in args[0]
+        assert str(external) in args[0]
+
+    def test_external_python_no_interp_configured(self, mock_qsettings):
+        # If the user picked external_python but never filled in a path,
+        # fail fast with a clear message instead of hitting subprocess.
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "external_python"
+        manager = GalleryDLManager(mock_qsettings)
+
+        with patch("subprocess.run") as run_mock:
+            ok, message = manager.try_update()
+
+        assert ok is False
+        assert "interpreter" in message.lower()
+        run_mock.assert_not_called()
+
+    def test_python_mode_targets_sys_executable(self, mock_qsettings):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        mock_qsettings._store[SettingsKeys.GALLERYDL_MODE] = "python"
+        manager = GalleryDLManager(mock_qsettings)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Successfully installed"
+        mock_result.stderr = ""
+
+        with (
+            patch.object(gm, "_find_uv_project_root", return_value=None),
+            patch("subprocess.run", return_value=mock_result) as run_mock,
+        ):
+            ok, message = manager.try_update()
+
+        assert ok is True
+        # uv pip install should target sys.executable via --python.
+        args, _ = run_mock.call_args_list[0]
+        assert "--python" in args[0]
+        assert sys.executable in args[0]
+
+
+class TestCanSelfUpdateExternalPython:
+    """can_self_update() returns True for external_python mode (we own the env)."""
+
+    def test_external_python_is_updatable(self, mock_qsettings):
+        manager = GalleryDLManager(mock_qsettings)
+
+        resolution = GalleryDLResolution(
+            mode="external_python",
+            command=["/some/external/python", "-m", "gallery_dl"],
+            display="/some/external/python -m gallery_dl",
+        )
+
+        assert manager.can_self_update(resolution) is True
+
+
+class TestFindUvProjectRootCustomStart:
+    """`_find_uv_project_root` accepts an explicit start path for external interpreters."""
+
+    def test_walks_up_from_explicit_start(self, tmp_path: Path):
+        from gallerydl_beyond.gallerydl_utils import gallerydl_manager as gm
+
+        project = tmp_path / "external_project"
+        venv_bin = project / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        (project / "pyproject.toml").write_text("")
+        (project / "uv.lock").write_text("")
+
+        # Start from the interpreter's directory rather than sys.prefix.
+        root = gm._find_uv_project_root(venv_bin)
+
+        assert root == project.resolve()
