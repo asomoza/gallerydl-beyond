@@ -2,8 +2,8 @@
     "extractor": {
         "base-directory": "./downloads",
         "directory": "",
-        "filename": "{id}_{num}.{extension}",
-        "skip": true,
+        "filename": "{category}_{id|filename}_{num}.{extension}",
+        "skip": "enumerate",
         "archive": "./bin/archive.sqlite3",
         "archive-pragma": [
             "journal_mode=WAL",
