@@ -28,12 +28,6 @@ This project targets Python 3.12+ and uses `uv` for environment management.
 uv sync
 ```
 
-Alternatively (pip):
-
-```bash
-pip install -e .
-```
-
 For a more controlled environment, this application requires a configuration file to be located in the same directory as the project or the executable. If no configuration file is found, an example configuration file will be created with the following settings:
 
 - Creates and uses a `downloads` directory for all downloads.
@@ -42,11 +36,10 @@ For a more controlled environment, this application requires a configuration fil
 - Restricts download speed to 1 MB/s.
 - Sets other download and output configurations.
 
-Note: current development targets the modern `src/` application.
 
-## Config management (new `src/` app)
+## Config management 
 
-The modern `src/` app uses a `config.json` file for gallery-dl.
+The app uses a `config.json` file for gallery-dl.
 
 - On startup, it ensures `config.json` exists in the current working directory.
 - If missing, it copies from `config_example/config.json` when available (otherwise it writes a minimal default).
@@ -57,9 +50,9 @@ The modern `src/` app uses a `config.json` file for gallery-dl.
 	- `downloader.retries`
 	- `downloader.timeout`
 
-## Gallery-dl options (new `src/` app)
+## Gallery-dl options
 
-The modern `src/` entrypoint resolves how to run gallery-dl at startup and stores your preference in `QSettings`.
+The app resolves how to run gallery-dl at startup and stores your preference in `QSettings`.
 
 Open **Gallery-dl Options** in the UI to configure:
 
@@ -72,7 +65,7 @@ Open **Gallery-dl Options** in the UI to configure:
 ### Configuration
 Edit common `config.json` settings (base-directory, archive, rate, retries, timeout).
 
-## History tab actions (new `src/` app)
+## History tab actions
 
 Right-click any row in **History** for quick actions:
 
@@ -114,14 +107,14 @@ Click any sortable column header to sort the History tab:
 
 Click again to toggle between ascending and descending order. Sorting resets to page 1.
 
-## Active downloads actions (new `src/` app)
+## Active downloads actions
 
 Right-click any item in the **Active downloads** list for quick actions:
 
 - **Stop this download**: stops the selected download (marks as Stopped, can be resumed later)
 - **Skip this download**: stops the selected download and marks it as Skipped
 
-## Live worker scaling (new `src/` app)
+## Live worker scaling
 
 You can adjust the number of concurrent downloads (1-8) while downloads are running:
 
