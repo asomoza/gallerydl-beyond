@@ -2,8 +2,15 @@
 .vscode/
 app.spec
 database.db
+gallery-dl.db
 dist/
 bin/
 build/
 downloads/
 **/__pycache__/
+config.json
+
+# Packaging/build artifacts
+*.egg-info/
+
+uv.lock
