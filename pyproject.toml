@@ -1,6 +1,6 @@
 [project]
 name = "gallerydl_beyond"
-version = "0.0.2"
+version = "0.1.0"
 authors = [{ name = "Alvaro Somoza", email = "somoza.alvaro@gmail.com" }]
 description = "Graphical User Interface (GUI) for gallery-dl"
 readme = "README.MD"

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.2 - Unreleased
+## 0.1.0 - 2026-07-13
 
 - new `src/` entrypoint improvements (startup checks + logging)
 - gallery-dl selection UI (Auto/System/Python/Custom)
